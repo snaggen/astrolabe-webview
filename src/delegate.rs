@@ -3,19 +3,28 @@ use std::rc::Rc;
 
 use async_channel::Sender;
 use servo::{
-    DeviceIntRect, EmbedderControl, EmbedderControlId, LoadStatus, RenderingContext, RgbaImage,
-    WebView, WebViewDelegate,
+    AuthenticationRequest, ConsoleLogLevel, Cursor, DeviceIntRect, EmbedderControl,
+    EmbedderControlId, LoadStatus, RenderingContext, RgbaImage, ServoDelegate, ServoError, WebView,
+    WebViewDelegate,
 };
 
 /// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
     pub current_frame: RefCell<Option<RgbaImage>>,
     pub load_status: Cell<LoadStatus>,
-    /// Pending dialog or file-picker control waiting for the app to respond.
+    /// Pending dialog or picker waiting for the app to respond.
     ///
-    /// Only one dialog can be pending at a time; a new arrival while one is
-    /// outstanding drops the earlier one (auto-reply via `Drop`).
+    /// Only one control can be pending at a time; a new arrival replaces the
+    /// previous one (which is dropped, sending its default reply automatically).
     pub pending_dialog: RefCell<Option<EmbedderControl>>,
+    /// Pending HTTP authentication request.
+    pub pending_auth: RefCell<Option<AuthenticationRequest>>,
+    /// Most recent cursor shape reported by the page.
+    pub cursor: Cell<Cursor>,
+    /// Whether the page is currently in fullscreen mode.
+    pub is_fullscreen: Cell<bool>,
+    /// Crash info set when a pipeline panics: `(reason, backtrace)`.
+    pub crashed: RefCell<Option<(String, Option<String>)>>,
 }
 
 impl SharedState {
@@ -24,6 +33,10 @@ impl SharedState {
             current_frame: RefCell::new(None),
             load_status: Cell::new(LoadStatus::Started),
             pending_dialog: RefCell::new(None),
+            pending_auth: RefCell::new(None),
+            cursor: Cell::new(Cursor::Default),
+            is_fullscreen: Cell::new(false),
+            crashed: RefCell::new(None),
         })
     }
 }
@@ -87,6 +100,54 @@ impl WebViewDelegate for CosmicWebViewDelegate {
     }
 
     fn hide_embedder_control(&self, _webview: WebView, _id: EmbedderControlId) {}
+
+    fn notify_cursor_changed(&self, _webview: WebView, cursor: Cursor) {
+        self.shared.cursor.set(cursor);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_fullscreen_state_changed(&self, _webview: WebView, is_fullscreen: bool) {
+        self.shared.is_fullscreen.set(is_fullscreen);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_crashed(&self, _webview: WebView, reason: String, backtrace: Option<String>) {
+        tracing::error!("WebView crashed: {reason}");
+        if let Some(bt) = &backtrace {
+            tracing::error!("Backtrace:\n{bt}");
+        }
+        *self.shared.crashed.borrow_mut() = Some((reason, backtrace));
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn request_authentication(
+        &self,
+        _webview: WebView,
+        authentication_request: AuthenticationRequest,
+    ) {
+        *self.shared.pending_auth.borrow_mut() = Some(authentication_request);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn show_console_message(&self, _webview: WebView, level: ConsoleLogLevel, message: String) {
+        match level {
+            ConsoleLogLevel::Trace => tracing::trace!(target: "webview::console", "{message}"),
+            ConsoleLogLevel::Debug => tracing::debug!(target: "webview::console", "{message}"),
+            ConsoleLogLevel::Warn => tracing::warn!(target: "webview::console", "{message}"),
+            ConsoleLogLevel::Error => tracing::error!(target: "webview::console", "{message}"),
+            // Log, Info, Dir all map to info level.
+            _ => tracing::info!(target: "webview::console", "{message}"),
+        }
+    }
+}
+
+/// Handles engine-level errors and forwards them to the tracing subscriber.
+pub(crate) struct CosmicServoDelegate;
+
+impl ServoDelegate for CosmicServoDelegate {
+    fn notify_error(&self, error: ServoError) {
+        tracing::error!("Servo engine error: {error:?}");
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +166,45 @@ mod tests {
         // Taking from an empty slot never panics and always returns None.
         assert!(shared.pending_dialog.borrow_mut().take().is_none());
         assert!(shared.pending_dialog.borrow_mut().take().is_none());
+    }
+
+    #[test]
+    fn shared_state_cursor_defaults_to_default() {
+        let shared = SharedState::new();
+        assert_eq!(shared.cursor.get(), Cursor::Default);
+    }
+
+    #[test]
+    fn shared_state_fullscreen_defaults_to_false() {
+        let shared = SharedState::new();
+        assert!(!shared.is_fullscreen.get());
+    }
+
+    #[test]
+    fn shared_state_crashed_initially_none() {
+        let shared = SharedState::new();
+        assert!(shared.crashed.borrow().is_none());
+    }
+
+    #[test]
+    fn shared_state_pending_auth_initially_none() {
+        let shared = SharedState::new();
+        assert!(shared.pending_auth.borrow().is_none());
+    }
+
+    #[test]
+    fn cursor_cell_can_be_updated() {
+        let shared = SharedState::new();
+        shared.cursor.set(Cursor::Pointer);
+        assert_eq!(shared.cursor.get(), Cursor::Pointer);
+    }
+
+    #[test]
+    fn crashed_stores_and_takes_info() {
+        let shared = SharedState::new();
+        *shared.crashed.borrow_mut() = Some(("oops".to_owned(), None));
+        let taken = shared.crashed.borrow_mut().take();
+        assert_eq!(taken, Some(("oops".to_owned(), None)));
+        assert!(shared.crashed.borrow().is_none());
     }
 }

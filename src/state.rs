@@ -2,10 +2,13 @@ use std::cell::Ref;
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
-use servo::{EmbedderControl, InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder};
+use servo::{
+    AuthenticationRequest, Cursor, EmbedderControl, InputEvent, LoadStatus, RgbaImage,
+    ServoBuilder, WebViewBuilder,
+};
 use url::Url;
 
-use crate::delegate::{CosmicWebViewDelegate, SharedState};
+use crate::delegate::{CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
 use crate::rendering::ActiveRenderingContext;
 use crate::waker::IcedEventLoopWaker;
 
@@ -67,6 +70,7 @@ impl ServoState {
             .event_loop_waker(Box::new(waker))
             .build();
         servo.setup_logging();
+        servo.set_delegate(Rc::new(CosmicServoDelegate));
 
         let webview = WebViewBuilder::new(&servo, rendering_ctx.as_rc())
             .url(initial_url)
@@ -137,6 +141,37 @@ impl ServoState {
     /// the user responds. Dropping the control sends the default reply.
     pub fn take_dialog(&self) -> Option<EmbedderControl> {
         self.shared.pending_dialog.borrow_mut().take()
+    }
+
+    /// Takes the pending HTTP authentication request, if any.
+    ///
+    /// Show a username/password dialog, then call
+    /// [`servo::AuthenticationRequest::authenticate`] with the credentials, or
+    /// drop the request to cancel authentication.
+    pub fn take_auth_request(&self) -> Option<AuthenticationRequest> {
+        self.shared.pending_auth.borrow_mut().take()
+    }
+
+    /// Returns the current cursor shape as last reported by the page.
+    ///
+    /// The app should update the window cursor whenever this changes.
+    pub fn cursor(&self) -> Cursor {
+        self.shared.cursor.get()
+    }
+
+    /// Returns `true` when the page has requested fullscreen mode.
+    ///
+    /// The app should transition the window to or from fullscreen accordingly.
+    pub fn is_fullscreen(&self) -> bool {
+        self.shared.is_fullscreen.get()
+    }
+
+    /// Takes the crash info if a pipeline has panicked since the last call.
+    ///
+    /// Returns `Some((reason, backtrace))`. The app should show a reload
+    /// prompt or an error page.
+    pub fn take_crash(&self) -> Option<(String, Option<String>)> {
+        self.shared.crashed.borrow_mut().take()
     }
 }
 
