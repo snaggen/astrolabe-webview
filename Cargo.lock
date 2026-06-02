@@ -1652,6 +1652,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "dpi 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "euclid",
  "gleam",
  "glow",
  "libcosmic",

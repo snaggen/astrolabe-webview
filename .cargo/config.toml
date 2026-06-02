@@ -1,0 +1,5 @@
+[build]
+# Silence warnings from path dependencies (libcosmic, servo) which have known
+# upstream warning issues. Our own code uses #![deny(warnings)] in lib.rs to
+# catch any issues we introduce.
+rustflags = ["-Awarnings"]

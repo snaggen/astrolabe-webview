@@ -28,6 +28,7 @@ async-channel = "2"
 # URL parsing and physical pixel sizes
 url = "2.5"
 dpi = "0.1"
+euclid = "0.22"
 
 # Structured logging used throughout the library
 tracing = "0.1"

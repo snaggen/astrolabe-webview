@@ -1,3 +1,4 @@
+#![deny(warnings)]
 //! Servo-based WebView widget for the COSMIC Desktop environment.
 //!
 //! # Example
@@ -20,5 +21,6 @@ mod waker;
 mod widget;
 
 // Public API — re-exported as each phase is implemented.
+pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 // pub use state::ServoState;
 // pub use widget::WebViewWidget;
