@@ -9,7 +9,7 @@ license = "MPL-2.0"
 [dependencies]
 # Web engine — servo 0.2.0 is not yet published on crates.io; pinned to a
 # specific commit on main. Switch to version = "0.2.0" once published.
-servo = { git = "https://github.com/servo/servo", rev = "c2f705ca2ff", default-features = false, features = ["js_jit", "vello"] }
+servo = { git = "https://github.com/servo/servo", rev = "c2f705ca2ff", default-features = false, features = ["js_jit", "vello", "baked-in-resources"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
@@ -32,3 +32,6 @@ euclid = "0.22"
 
 # Structured logging used throughout the library
 tracing = "0.1"
+
+# TLS provider — must be initialised once before Servo starts networking.
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }

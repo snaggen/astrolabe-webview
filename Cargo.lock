@@ -1656,6 +1656,7 @@ dependencies = [
  "gleam",
  "glow",
  "libcosmic",
+ "rustls",
  "servo",
  "surfman",
  "tracing",
@@ -7607,6 +7608,7 @@ dependencies = [
  "servo-config",
  "servo-constellation",
  "servo-constellation-traits",
+ "servo-default-resources",
  "servo-devtools",
  "servo-devtools-traits",
  "servo-embedder-traits",
@@ -7850,6 +7852,14 @@ dependencies = [
  "uuid",
  "webrender_api",
  "zeroize",
+]
+
+[[package]]
+name = "servo-default-resources"
+version = "0.3.0"
+source = "git+https://github.com/servo/servo?rev=c2f705ca2ff#c2f705ca2ff8ba440cffa61e95ad590385e459fa"
+dependencies = [
+ "servo-embedder-traits",
 ]
 
 [[package]]

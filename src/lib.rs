@@ -22,6 +22,6 @@ mod widget;
 
 // Public API — re-exported as each phase is implemented.
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
+pub use state::ServoState;
 pub use waker::IcedEventLoopWaker;
-// pub use state::ServoState;
 // pub use widget::WebViewWidget;

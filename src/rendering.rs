@@ -25,7 +25,7 @@ use servo::{DeviceIntRect, RgbaImage, SoftwareRenderingContext};
 /// # Example
 ///
 /// ```no_run
-/// use cosmic_webview::rendering::GpuRenderingContext;
+/// use cosmic_webview::GpuRenderingContext;
 /// use dpi::PhysicalSize;
 ///
 /// let ctx = GpuRenderingContext::new(PhysicalSize::new(800_u32, 600)).unwrap();
@@ -262,7 +262,7 @@ fn read_pixels_from_fbo(gl: &Rc<dyn Gl>, fbo_id: u32, rect: DeviceIntRect) -> Op
 /// # Example
 ///
 /// ```no_run
-/// use cosmic_webview::rendering::ActiveRenderingContext;
+/// use cosmic_webview::ActiveRenderingContext;
 /// use dpi::PhysicalSize;
 ///
 /// let ctx = ActiveRenderingContext::create(PhysicalSize::new(800_u32, 600));
@@ -297,6 +297,19 @@ impl ActiveRenderingContext {
     /// with [`servo::WebViewBuilder`].
     pub fn as_rc(&self) -> Rc<dyn servo::RenderingContext> {
         self.0.clone()
+    }
+
+    /// Creates a software-only context, bypassing the GPU attempt.
+    ///
+    /// Intended for tests, where GPU WebRender rendering may not be available
+    /// or reliable. Matches what Servo's own test suite uses.
+    #[cfg(test)]
+    pub(crate) fn software(size: PhysicalSize<u32>) -> Self {
+        use servo::RenderingContext as _;
+        let ctx = SoftwareRenderingContext::new(size)
+            .expect("software rendering context must be available");
+        ctx.make_current().expect("make_current");
+        Self(Rc::new(ctx))
     }
 }
 

@@ -9,7 +9,7 @@ use async_channel::Sender;
 /// # Example
 ///
 /// ```
-/// let (waker, rx) = cosmic_webview::waker::IcedEventLoopWaker::new();
+/// let (waker, rx) = cosmic_webview::IcedEventLoopWaker::new();
 /// // Give `waker` to ServoBuilder, poll `rx` in an iced Subscription.
 /// ```
 #[derive(Clone)]
@@ -23,6 +23,14 @@ impl IcedEventLoopWaker {
     pub fn new() -> (Self, async_channel::Receiver<()>) {
         let (tx, rx) = async_channel::bounded(1);
         (Self(tx), rx)
+    }
+
+    /// Returns a clone of the underlying sender for use inside the delegate.
+    ///
+    /// The delegate calls `try_send(())` directly instead of going through
+    /// the `EventLoopWaker` trait, avoiding a trait import at the call site.
+    pub(crate) fn sender(&self) -> async_channel::Sender<()> {
+        self.0.clone()
     }
 }
 
