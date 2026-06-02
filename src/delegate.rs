@@ -30,11 +30,12 @@ impl SharedState {
 
 /// Receives callbacks from Servo and updates shared state.
 ///
-/// [`EmbedderControl::SimpleDialog`] and [`EmbedderControl::FilePicker`]
-/// variants are stored in [`SharedState::pending_dialog`] for the app to
-/// retrieve via [`crate::state::ServoState::take_dialog`]. All other
-/// `EmbedderControl` variants are dropped, which sends a default reply
-/// automatically.
+/// [`EmbedderControl::SimpleDialog`], [`EmbedderControl::FilePicker`],
+/// [`EmbedderControl::ColorPicker`], [`EmbedderControl::SelectElement`],
+/// and [`EmbedderControl::ContextMenu`] are stored in
+/// [`SharedState::pending_dialog`] for the app to retrieve via
+/// [`crate::state::ServoState::take_dialog`]. All other `EmbedderControl`
+/// variants are dropped, which sends a default reply automatically.
 pub(crate) struct CosmicWebViewDelegate {
     rendering_ctx: Rc<dyn RenderingContext>,
     shared: Rc<SharedState>,
@@ -71,8 +72,12 @@ impl WebViewDelegate for CosmicWebViewDelegate {
 
     fn show_embedder_control(&self, _webview: WebView, control: EmbedderControl) {
         match control {
-            // Queue dialogs and file pickers for the app to present.
-            EmbedderControl::SimpleDialog(_) | EmbedderControl::FilePicker(_) => {
+            // Queue controls that require user interaction for the app to present.
+            EmbedderControl::SimpleDialog(_)
+            | EmbedderControl::FilePicker(_)
+            | EmbedderControl::ColorPicker(_)
+            | EmbedderControl::SelectElement(_)
+            | EmbedderControl::ContextMenu(_) => {
                 *self.shared.pending_dialog.borrow_mut() = Some(control);
                 let _ = self.waker_tx.try_send(());
             }
