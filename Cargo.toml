@@ -1,0 +1,33 @@
+[package]
+name = "cosmic-webview"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Servo-based WebView widget for the COSMIC Desktop environment"
+license = "MPL-2.0"
+
+[dependencies]
+# Web engine — servo 0.2.0 is not yet published on crates.io; using main branch.
+# Switch to version = "0.2.0" once it appears on crates.io.
+servo = { path = "../servo/components/servo", default-features = false, features = ["js_jit", "vello"] }
+
+# surfman, gleam and glow are used directly in rendering.rs to implement
+# servo::RenderingContext with a GPU adapter and no window handle. Versions
+# must be compatible with what servo 0.2.0 uses internally.
+surfman      = { version = "0.12", features = ["chains"] }
+gleam        = "0.15"
+glow         = "0.17.0"
+
+# UI toolkit (not yet on crates.io)
+libcosmic    = { package = "libcosmic", path = "../cosmic-epoch/libcosmic" }
+
+# Event loop waker channel — Send + Sync + Clone, suitable for crossing the
+# Servo/iced boundary without requiring Servo to be Send.
+async-channel = "2"
+
+# URL parsing and physical pixel sizes
+url = "2.5"
+dpi = "0.1"
+
+# Structured logging used throughout the library
+tracing = "0.1"
