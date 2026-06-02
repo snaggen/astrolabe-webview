@@ -2,7 +2,7 @@ use std::cell::Ref;
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
-use servo::{InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder};
+use servo::{EmbedderControl, InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder};
 use url::Url;
 
 use crate::delegate::{CosmicWebViewDelegate, SharedState};
@@ -126,6 +126,17 @@ impl ServoState {
     /// Returns a clone of the wake receiver for use in an iced `Subscription`.
     pub fn waker_rx(&self) -> async_channel::Receiver<()> {
         self.waker_rx.clone()
+    }
+
+    /// Takes the pending dialog or file-picker control, if any.
+    ///
+    /// Call this after [`Self::spin`] to check whether Servo has requested a
+    /// dialog. Present the dialog using libcosmic widgets, then call
+    /// [`servo::SimpleDialog::confirm`] / [`servo::SimpleDialog::dismiss`] or
+    /// [`servo::FilePicker::submit`] / [`servo::FilePicker::dismiss`] when
+    /// the user responds. Dropping the control sends the default reply.
+    pub fn take_dialog(&self) -> Option<EmbedderControl> {
+        self.shared.pending_dialog.borrow_mut().take()
     }
 }
 

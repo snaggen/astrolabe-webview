@@ -14,7 +14,7 @@
 //! ```
 
 mod delegate;
-mod dialogs;
+pub mod dialogs;
 mod rendering;
 mod state;
 mod waker;
