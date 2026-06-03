@@ -18,8 +18,9 @@ surfman      = { version = "0.12", features = ["chains"] }
 gleam        = "0.15"
 glow         = "0.17.0"
 
-# UI toolkit (not yet on crates.io)
-libcosmic    = { package = "libcosmic", path = "../cosmic-epoch/libcosmic" }
+# UI toolkit (not yet on crates.io) — wgpu is always required for GPU frame rendering
+libcosmic    = { package = "libcosmic", path = "../cosmic-epoch/libcosmic", features = ["wgpu"] }
+iced_wgpu    = { path = "../cosmic-epoch/libcosmic/iced/wgpu" }
 
 # Event loop waker channel — Send + Sync + Clone, suitable for crossing the
 # Servo/iced boundary without requiring Servo to be Send.
@@ -35,3 +36,13 @@ tracing = "0.1"
 
 # TLS provider — must be initialised once before Servo starts networking.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
+[[example]]
+name = "browser"
+# The browser example needs the winit+wgpu feature set from libcosmic.
+required-features = ["browser-example"]
+
+[features]
+browser-example = [
+    "libcosmic/winit",
+]

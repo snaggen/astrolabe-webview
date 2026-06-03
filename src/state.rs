@@ -127,6 +127,15 @@ impl ServoState {
         self.shared.load_status.get()
     }
 
+    /// Returns a monotonically increasing counter that increments each time
+    /// a new rendered frame is available.
+    ///
+    /// Use this to avoid re-creating an `image::Handle` on every wake signal:
+    /// only rebuild the handle when this value changes.
+    pub fn frame_generation(&self) -> u64 {
+        self.shared.frame_generation.get()
+    }
+
     /// Returns a clone of the wake receiver for use in an iced `Subscription`.
     pub fn waker_rx(&self) -> async_channel::Receiver<()> {
         self.waker_rx.clone()

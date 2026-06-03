@@ -12,6 +12,10 @@ use servo::{
 pub(crate) struct SharedState {
     pub current_frame: RefCell<Option<RgbaImage>>,
     pub load_status: Cell<LoadStatus>,
+    /// Incremented each time [`notify_new_frame_ready`] produces a new frame.
+    /// Callers can compare against a stored value to detect actual frame changes
+    /// without cloning pixel data on every wake signal.
+    pub frame_generation: Cell<u64>,
     /// Pending dialog or picker waiting for the app to respond.
     ///
     /// Only one control can be pending at a time; a new arrival replaces the
@@ -32,6 +36,7 @@ impl SharedState {
         Rc::new(Self {
             current_frame: RefCell::new(None),
             load_status: Cell::new(LoadStatus::Started),
+            frame_generation: Cell::new(0),
             pending_dialog: RefCell::new(None),
             pending_auth: RefCell::new(None),
             cursor: Cell::new(Cursor::Default),
@@ -75,6 +80,9 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         let rect = DeviceIntRect::from_size(webview.size().to_i32());
         if let Some(img) = self.rendering_ctx.read_to_image(rect) {
             *self.shared.current_frame.borrow_mut() = Some(img);
+            self.shared
+                .frame_generation
+                .set(self.shared.frame_generation.get().wrapping_add(1));
         }
         let _ = self.waker_tx.try_send(());
     }

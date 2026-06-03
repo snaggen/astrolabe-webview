@@ -15,13 +15,15 @@
 
 mod delegate;
 pub mod dialogs;
+pub mod primitive;
 mod rendering;
 mod state;
 mod waker;
 mod widget;
 
-// Public API — re-exported as each phase is implemented.
+// Public API
+pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::ServoState;
 pub use waker::IcedEventLoopWaker;
-// pub use widget::WebViewWidget;
+pub use widget::WebViewWidget;
