@@ -4,6 +4,8 @@
 //!   cargo run --example browser --features browser-example
 //!   LIBGL_ALWAYS_SOFTWARE=1 cargo run --example browser --features browser-example
 
+use std::collections::HashMap;
+
 use cosmic_webview::{ServoState, WebViewFrame, WebViewWidget};
 use dpi::PhysicalSize;
 use libcosmic::app::{Core, Settings, Task};
@@ -11,8 +13,90 @@ use libcosmic::executor;
 use libcosmic::iced::{Event, Length, Subscription, window};
 use libcosmic::prelude::*;
 use libcosmic::widget;
-use servo::InputEvent;
+use libcosmic::widget::menu::{self, action::MenuAction};
+use servo::{
+    ContextMenu, ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl,
+    InputEvent,
+};
 use url::Url;
+
+// ── Context menu ──────────────────────────────────────────────────────────────
+
+/// Unified action for both static fallback items and Servo-provided items.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ContextAction {
+    // Static fallback actions (used before Servo responds with its items)
+    GoBack,
+    GoForward,
+    Reload,
+    Copy,
+    Paste,
+    // Servo-delegated actions — Servo handles these internally via select()
+    Servo(ContextMenuAction),
+}
+
+// ContextMenuAction implements PartialEq but not Eq; the enum has no floats or
+// other non-reflexive fields, so Eq holds and we declare it manually.
+impl Eq for ContextAction {}
+
+impl MenuAction for ContextAction {
+    type Message = Message;
+    fn message(&self) -> Message {
+        match self {
+            ContextAction::GoBack => Message::GoBack,
+            ContextAction::GoForward => Message::GoForward,
+            ContextAction::Reload => Message::Reload,
+            ContextAction::Copy => Message::CopySelection,
+            ContextAction::Paste => Message::Paste,
+            ContextAction::Servo(a) => Message::ServoContextMenuSelected(*a),
+        }
+    }
+}
+
+/// Build the static fallback menu shown while waiting for Servo's items.
+fn build_default_menu(can_go_back: bool, can_go_forward: bool) -> Vec<menu::Tree<Message>> {
+    let items: Vec<menu::Item<ContextAction, &'static str>> = vec![
+        if can_go_back {
+            menu::Item::Button("Back", None, ContextAction::GoBack)
+        } else {
+            menu::Item::ButtonDisabled("Back", None, ContextAction::GoBack)
+        },
+        if can_go_forward {
+            menu::Item::Button("Forward", None, ContextAction::GoForward)
+        } else {
+            menu::Item::ButtonDisabled("Forward", None, ContextAction::GoForward)
+        },
+        menu::Item::Button("Reload", None, ContextAction::Reload),
+        menu::Item::Divider,
+        menu::Item::Button("Copy", None, ContextAction::Copy),
+        menu::Item::Button("Paste", None, ContextAction::Paste),
+    ];
+    menu::items(&HashMap::new(), items)
+}
+
+/// Build a context menu from Servo's context-sensitive items.
+fn build_servo_menu(items: &[ContextMenuItem]) -> Vec<menu::Tree<Message>> {
+    let menu_items: Vec<menu::Item<ContextAction, String>> = items
+        .iter()
+        .map(|item| match item {
+            ContextMenuItem::Item {
+                label,
+                action,
+                enabled,
+            } => {
+                if *enabled {
+                    menu::Item::Button(label.clone(), None, ContextAction::Servo(*action))
+                } else {
+                    menu::Item::ButtonDisabled(label.clone(), None, ContextAction::Servo(*action))
+                }
+            }
+            ContextMenuItem::Separator => menu::Item::Divider,
+        })
+        .collect();
+    menu::items(&HashMap::new(), menu_items)
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::default().size((1280, 800).into());
@@ -37,8 +121,13 @@ pub enum Message {
     GoBack,
     GoForward,
     Reload,
+    /// Copy selected text on the page to clipboard.
+    CopySelection,
+    /// Paste clipboard text into the focused element.
+    Paste,
+    /// User selected an item from Servo's context menu.
+    ServoContextMenuSelected(ContextMenuAction),
     /// The webview widget has been laid out at a new physical size.
-    /// Used to keep Servo's rendering resolution in sync with actual widget bounds.
     WebViewResized(u32, u32),
     /// HiDPI scale factor changed — update coordinate conversion factor.
     ScaleChanged(f32),
@@ -52,12 +141,15 @@ pub struct Browser {
     /// Text currently shown in the URL bar.
     url_bar: String,
     /// Whether the URL bar currently holds iced keyboard focus.
-    ///
-    /// Driven symmetrically by `on_focus`/`on_unfocus` on the text input.
-    /// When `true`, keyboard events are suppressed in the webview widget.
     url_bar_focused: bool,
     /// HiDPI scale factor — for converting logical cursor positions to physical.
     scale: f32,
+    /// Servo's context menu handler, kept alive until the user responds.
+    /// Drop sends an automatic dismiss to Servo.
+    servo_context_menu: Option<ContextMenu>,
+    /// Items from Servo's last ContextMenu, used to build the popup.
+    /// Replaced on each right-click; cleared after response.
+    servo_context_items: Vec<ContextMenuItem>,
 }
 
 // Newtype so async_channel::Receiver<()> satisfies Hash for Subscription::run_with.
@@ -73,7 +165,6 @@ impl std::hash::Hash for ServoRx {
 impl Browser {
     fn try_navigate(&mut self) {
         let raw = self.url_bar.trim().to_owned();
-        // Treat bare hostnames as https:// URLs.
         let with_scheme = if raw.contains("://") {
             raw.clone()
         } else {
@@ -83,6 +174,14 @@ impl Browser {
             self.url_bar = url.to_string();
             self.servo.navigate(url);
         }
+    }
+
+    /// Dismiss the pending Servo context menu (if any) without selecting.
+    ///
+    /// Drop sends the dismiss automatically, so assigning `None` is enough.
+    fn dismiss_context_menu(&mut self) {
+        self.servo_context_menu = None;
+        self.servo_context_items.clear();
     }
 }
 
@@ -112,6 +211,8 @@ impl libcosmic::Application for Browser {
             url_bar: initial_url.to_string(),
             url_bar_focused: false,
             scale: 1.0,
+            servo_context_menu: None,
+            servo_context_items: Vec::new(),
         };
         (app, Task::none())
     }
@@ -137,25 +238,28 @@ impl libcosmic::Application for Browser {
             Message::ServoWake => {
                 self.servo.spin();
 
-                // Only update the URL bar when it is not focused — otherwise
-                // Servo's URL reports would overwrite what the user is typing.
+                // Pick up context-sensitive menu items from Servo. These arrive
+                // one frame after the right-click. The context_menu overlay reads
+                // items on every render, so the popup updates automatically.
+                if let Some(EmbedderControl::ContextMenu(menu)) = self.servo.take_dialog() {
+                    self.servo_context_items = menu.items().to_vec();
+                    self.servo_context_menu = Some(menu);
+                }
+
                 if !self.url_bar_focused
                     && let Some(url) = self.servo.current_url()
                 {
                     self.url_bar = url.to_string();
                 }
 
-                // Update window title from page title.
                 let title = self.servo.title().unwrap_or_default();
                 self.set_header_title(title);
 
-                // Push the newest frame into the persistent GPU buffer.
                 if let Some(img) = self.servo.current_frame().as_ref() {
                     let (w, h) = img.dimensions();
                     self.frame.update(w, h, img.as_raw());
                 }
 
-                // Log crashes — a real browser would show an error page.
                 if let Some((reason, _bt)) = self.servo.take_crash() {
                     tracing::error!("WebView crashed: {reason}");
                 }
@@ -176,13 +280,33 @@ impl libcosmic::Application for Browser {
                 self.try_navigate();
             }
             Message::GoBack => {
+                self.dismiss_context_menu();
                 self.servo.go_back();
             }
             Message::GoForward => {
+                self.dismiss_context_menu();
                 self.servo.go_forward();
             }
             Message::Reload => {
+                self.dismiss_context_menu();
                 self.servo.reload();
+            }
+            Message::CopySelection => {
+                self.dismiss_context_menu();
+                self.servo
+                    .send_input(InputEvent::EditingAction(EditingActionEvent::Copy));
+            }
+            Message::Paste => {
+                self.dismiss_context_menu();
+                self.servo
+                    .send_input(InputEvent::EditingAction(EditingActionEvent::Paste));
+            }
+            Message::ServoContextMenuSelected(action) => {
+                // Let Servo execute the action (copy link, open image, etc.)
+                if let Some(menu) = self.servo_context_menu.take() {
+                    menu.select(action);
+                }
+                self.servo_context_items.clear();
             }
             Message::WebViewResized(w, h) => {
                 self.servo.resize(PhysicalSize::new(w, h));
@@ -194,7 +318,6 @@ impl libcosmic::Application for Browser {
         Task::none()
     }
 
-    // Nav buttons go in the header bar start section.
     fn header_start(&self) -> Vec<Element<'_, Message>> {
         let back = widget::button::icon(widget::icon::from_name("go-previous-symbolic"))
             .on_press_maybe(self.servo.can_go_back().then_some(Message::GoBack));
@@ -208,7 +331,6 @@ impl libcosmic::Application for Browser {
         vec![back.into(), forward.into(), reload.into()]
     }
 
-    // URL bar goes in the header center so it stretches to fill available space.
     fn header_center(&self) -> Vec<Element<'_, Message>> {
         let url_bar = widget::text_input("https://example.com", &self.url_bar)
             .on_focus(Message::UrlBarFocused)
@@ -222,11 +344,20 @@ impl libcosmic::Application for Browser {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        WebViewWidget::new(&self.frame)
+        let webview = WebViewWidget::new(&self.frame)
             .scale(self.scale)
             .on_input(Message::Input)
             .on_resize(Message::WebViewResized)
-            .keyboard_enabled(!self.url_bar_focused)
-            .into()
+            .keyboard_enabled(!self.url_bar_focused);
+
+        // Use Servo's context-sensitive items when available (arrives ~1 frame
+        // after right-click). Falls back to a static browser menu initially.
+        let menu_items = if self.servo_context_items.is_empty() {
+            build_default_menu(self.servo.can_go_back(), self.servo.can_go_forward())
+        } else {
+            build_servo_menu(&self.servo_context_items)
+        };
+
+        widget::context_menu(webview, Some(menu_items)).into()
     }
 }
