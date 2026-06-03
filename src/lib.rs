@@ -15,6 +15,7 @@
 
 mod delegate;
 pub mod dialogs;
+pub(crate) mod input;
 pub mod primitive;
 mod rendering;
 mod state;

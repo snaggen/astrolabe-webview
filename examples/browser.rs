@@ -10,6 +10,7 @@ use libcosmic::app::{Core, Settings, Task};
 use libcosmic::executor;
 use libcosmic::iced::{Event, Subscription, window};
 use libcosmic::prelude::*;
+use servo::InputEvent;
 use url::Url;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -21,6 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Clone, Debug)]
 pub enum Message {
     ServoWake,
+    /// A mouse or keyboard event from the webview widget to forward to Servo.
+    Input(InputEvent),
     /// Window was resized to new logical pixel dimensions.
     WindowResized(f32, f32),
     /// HiDPI scale factor changed.
@@ -94,8 +97,8 @@ impl libcosmic::Application for Browser {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        use libcosmic::iced::futures::StreamExt as _;
         use libcosmic::iced::event;
+        use libcosmic::iced::futures::StreamExt as _;
 
         let servo_sub = Subscription::run_with(ServoRx(self.servo.waker_rx()), |s| {
             s.0.clone().map(|_| Message::ServoWake)
@@ -123,6 +126,9 @@ impl libcosmic::Application for Browser {
                     self.frame.update(w, h, img.as_raw());
                 }
             }
+            Message::Input(event) => {
+                self.servo.send_input(event);
+            }
             Message::WindowResized(w, h) => {
                 self.logical_size = (w, h);
                 self.sync_servo_size();
@@ -136,6 +142,9 @@ impl libcosmic::Application for Browser {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        WebViewWidget::new(&self.frame).into()
+        WebViewWidget::new(&self.frame)
+            .scale(self.scale)
+            .on_input(Message::Input)
+            .into()
     }
 }

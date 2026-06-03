@@ -2,12 +2,17 @@ use std::marker::PhantomData;
 
 use iced_wgpu::primitive::Renderer as PrimitiveRenderer;
 use libcosmic::iced::advanced::widget::Tree;
-use libcosmic::iced::advanced::{Layout, Renderer as _, Widget, layout, mouse, renderer};
-use libcosmic::iced::{Background, Border, Color, Length, Rectangle, Shadow, Size};
+use libcosmic::iced::advanced::{
+    Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer,
+};
+use libcosmic::iced::{Background, Border, Color, Event, Length, Rectangle, Shadow, Size};
+use servo::InputEvent;
 
+use crate::input;
 use crate::primitive::{WebViewFrame, WebViewPrimitive};
 
-/// A read-only iced widget that displays the current Servo WebView frame.
+/// A read-only iced widget that displays the current Servo WebView frame and
+/// forwards mouse and keyboard input to Servo.
 ///
 /// Create it in your application's `view()` by passing a reference to the
 /// [`WebViewFrame`] stored in your app state. When no frame has been rendered
@@ -21,16 +26,24 @@ use crate::primitive::{WebViewFrame, WebViewPrimitive};
 /// struct App {
 ///     servo: ServoState,
 ///     frame: WebViewFrame,
+///     scale: f32,
 /// }
 ///
 /// fn view(state: &App) -> libcosmic::Element<'_, Message> {
-///     WebViewWidget::new(&state.frame).into()
+///     WebViewWidget::new(&state.frame)
+///         .scale(state.scale)
+///         .on_input(Message::Input)
+///         .into()
 /// }
 /// ```
 pub struct WebViewWidget<'a, Message> {
     frame: &'a WebViewFrame,
     width: Length,
     height: Length,
+    /// HiDPI scale factor — converts logical cursor positions to device pixels.
+    scale: f32,
+    /// Callback that wraps a [`InputEvent`] into the app's `Message` type.
+    on_input: Option<Box<dyn Fn(InputEvent) -> Message + 'a>>,
     _phantom: PhantomData<Message>,
 }
 
@@ -43,6 +56,8 @@ impl<'a, Message> WebViewWidget<'a, Message> {
             frame,
             width: Length::Fill,
             height: Length::Fill,
+            scale: 1.0,
+            on_input: None,
             _phantom: PhantomData,
         }
     }
@@ -56,6 +71,24 @@ impl<'a, Message> WebViewWidget<'a, Message> {
     /// Sets the widget height. Defaults to [`Length::Fill`].
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.height = height.into();
+        self
+    }
+
+    /// Sets the HiDPI scale factor used to convert logical cursor coordinates
+    /// to Servo device pixels. Defaults to `1.0`.
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    /// Registers a callback that fires whenever a mouse or keyboard event
+    /// occurs inside the widget.
+    ///
+    /// The callback converts a Servo [`InputEvent`] into the app's `Message`
+    /// type. The app should forward the event to Servo via
+    /// [`ServoState::send_input`].
+    pub fn on_input(mut self, f: impl Fn(InputEvent) -> Message + 'a) -> Self {
+        self.on_input = Some(Box::new(f));
         self
     }
 }
@@ -107,6 +140,38 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
             );
         }
     }
+
+    fn update(
+        &mut self,
+        _state: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _renderer: &libcosmic::Renderer,
+        _clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _viewport: &Rectangle,
+    ) {
+        let Some(on_input) = &self.on_input else {
+            return;
+        };
+
+        let bounds = layout.bounds();
+        let scale = self.scale;
+
+        let servo_event = match event {
+            Event::Mouse(me) => {
+                let pos_in_bounds = cursor.position_in(bounds);
+                input::mouse_event_to_servo(me, pos_in_bounds, scale)
+            }
+            Event::Keyboard(ke) => input::keyboard_event_to_servo(ke),
+            _ => None,
+        };
+
+        if let Some(e) = servo_event {
+            shell.publish(on_input(e));
+        }
+    }
 }
 
 impl<'a, Message: 'a> From<WebViewWidget<'a, Message>> for libcosmic::Element<'a, Message> {
@@ -143,5 +208,19 @@ mod tests {
     fn new_with_empty_frame_is_valid() {
         let frame = WebViewFrame::new();
         let _w: WebViewWidget<'_, ()> = WebViewWidget::new(&frame);
+    }
+
+    #[test]
+    fn scale_is_stored() {
+        let frame = WebViewFrame::new();
+        let w: WebViewWidget<'_, ()> = WebViewWidget::new(&frame).scale(2.0);
+        assert!((w.scale - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn on_input_sets_callback() {
+        let frame = WebViewFrame::new();
+        let w: WebViewWidget<'_, ()> = WebViewWidget::new(&frame).on_input(|_| ());
+        assert!(w.on_input.is_some());
     }
 }
