@@ -14,10 +14,22 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 // ── Shared frame state ────────────────────────────────────────────────────────
+
+/// Pixel data and dimensions, updated atomically under a single `Mutex`.
+///
+/// Combining `pixels` and the size into one lock prevents the data race where
+/// a producer sets new pixels (lock 1) but hasn't updated the size (lock 2)
+/// yet, and a consumer snapshots an inconsistent pair.
+#[derive(Debug)]
+pub(crate) struct FrameInner {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+}
 
 /// Shared pixel buffer and upload flag, held by the application state and
 /// referenced by [`WebViewPrimitive`] on every draw.
@@ -36,21 +48,28 @@ use std::sync::{
 /// ```
 pub struct WebViewFrame {
     pub(crate) id: u64,
-    pub(crate) pixels: Arc<std::sync::Mutex<Vec<u8>>>,
-    pub(crate) size: std::sync::Mutex<(u32, u32)>,
+    /// Pixel data and dimensions, always updated together under one lock.
+    pub(crate) inner: Arc<std::sync::Mutex<FrameInner>>,
     pub(crate) needs_upload: Arc<AtomicBool>,
+    /// Set to `true` on the first successful `update()`, checked by `has_frame()`
+    /// without taking the `inner` lock.
+    has_pixels: AtomicBool,
     pub(crate) alive: Arc<AtomicBool>,
 }
 
 impl WebViewFrame {
     /// Creates a new, initially empty frame.
     pub fn new() -> Self {
-        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         Self {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            pixels: Arc::new(std::sync::Mutex::new(Vec::new())),
-            size: std::sync::Mutex::new((0, 0)),
+            inner: Arc::new(std::sync::Mutex::new(FrameInner {
+                pixels: Vec::new(),
+                width: 0,
+                height: 0,
+            })),
             needs_upload: Arc::new(AtomicBool::new(false)),
+            has_pixels: AtomicBool::new(false),
             alive: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -59,19 +78,24 @@ impl WebViewFrame {
     ///
     /// Call this from `App::update()` when a new Servo frame arrives.
     pub fn update(&self, width: u32, height: u32, rgba: &[u8]) {
-        if let Ok(mut buf) = self.pixels.lock() {
-            buf.clear();
-            buf.extend_from_slice(rgba);
+        // Update pixels and dimensions atomically under a single lock to prevent
+        // a consumer from reading new pixels with the old size (or vice versa).
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.pixels.clear();
+            inner.pixels.extend_from_slice(rgba);
+            inner.width = width;
+            inner.height = height;
         }
-        if let Ok(mut sz) = self.size.lock() {
-            *sz = (width, height);
-        }
-        self.needs_upload.store(true, Ordering::SeqCst);
+        // Release ordering: the writes above must be visible before the flag.
+        self.has_pixels.store(true, Ordering::Release);
+        self.needs_upload.store(true, Ordering::Release);
     }
 
     /// Returns `true` if at least one frame has been received.
+    ///
+    /// Uses an `AtomicBool` to avoid taking the `inner` lock on the draw path.
     pub fn has_frame(&self) -> bool {
-        self.size.lock().map(|s| s.0 > 0).unwrap_or(false)
+        self.has_pixels.load(Ordering::Acquire)
     }
 }
 
@@ -83,7 +107,7 @@ impl Default for WebViewFrame {
 
 impl Drop for WebViewFrame {
     fn drop(&mut self) {
-        self.alive.store(false, Ordering::SeqCst);
+        self.alive.store(false, Ordering::Release);
     }
 }
 
@@ -101,8 +125,7 @@ use iced_wgpu::wgpu;
 #[derive(Clone, Debug)]
 pub(crate) struct WebViewPrimitive {
     id: u64,
-    pixels: Arc<std::sync::Mutex<Vec<u8>>>,
-    size: (u32, u32),
+    inner: Arc<std::sync::Mutex<FrameInner>>,
     upload: bool,
     alive: Arc<AtomicBool>,
 }
@@ -111,12 +134,13 @@ impl WebViewPrimitive {
     /// Creates a primitive from the shared frame, atomically consuming the
     /// pending-upload flag so that each frame is uploaded at most once.
     pub(crate) fn from_frame(frame: &WebViewFrame) -> Self {
-        let upload = frame.needs_upload.swap(false, Ordering::SeqCst);
-        let size = frame.size.lock().map(|s| *s).unwrap_or((0, 0));
+        // AcqRel: the swap acts as both acquire (reads above become visible) and
+        // release (ensuring the flag clear is seen by subsequent loads). This is
+        // sufficient for a single producer / single consumer flag.
+        let upload = frame.needs_upload.swap(false, Ordering::AcqRel);
         Self {
             id: frame.id,
-            pixels: Arc::clone(&frame.pixels),
-            size,
+            inner: Arc::clone(&frame.inner),
             upload,
             alive: Arc::clone(&frame.alive),
         }
@@ -197,7 +221,10 @@ impl Pipeline for WebViewPipeline {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    // REPLACE: the WebView fills its entire bounds with opaque pixels.
+                    // Alpha blending would waste blend hardware and composite against
+                    // the iced background for no visual benefit.
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -229,7 +256,7 @@ impl Pipeline for WebViewPipeline {
         let dead: Vec<_> = self
             .entries
             .iter()
-            .filter_map(|(id, e)| (!e.alive.load(Ordering::SeqCst)).then_some(*id))
+            .filter_map(|(id, e)| (!e.alive.load(Ordering::Acquire)).then_some(*id))
             .collect();
         for id in dead {
             if let Some(e) = self.entries.remove(&id) {
@@ -274,6 +301,9 @@ impl WebViewPipeline {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
+                // Rgba8UnormSrgb: WebRender renders into an sRGB framebuffer, so
+                // glReadPixels returns sRGB-encoded bytes. Uploading as sRGB lets
+                // the GPU sampler linearise on read, which is correct.
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
@@ -345,10 +375,18 @@ impl Primitive for WebViewPrimitive {
         _bounds: &iced_wgpu::core::Rectangle,
         _viewport: &iced_wgpu::graphics::Viewport,
     ) {
-        if self.upload
-            && let Ok(pixels) = self.pixels.lock()
-        {
-            pipeline.upload(device, queue, self.id, &self.alive, self.size, &pixels);
+        if self.upload {
+            // Lock inner once to get both pixels and dimensions atomically.
+            if let Ok(inner) = self.inner.lock() {
+                pipeline.upload(
+                    device,
+                    queue,
+                    self.id,
+                    &self.alive,
+                    (inner.width, inner.height),
+                    &inner.pixels,
+                );
+            }
         }
     }
 
@@ -387,12 +425,32 @@ mod tests {
     }
 
     #[test]
+    fn update_stores_pixels_and_dimensions_atomically() {
+        let frame = WebViewFrame::new();
+        frame.update(4, 4, &[0xffu8; 64]);
+        let inner = frame.inner.lock().unwrap();
+        assert_eq!(inner.width, 4);
+        assert_eq!(inner.height, 4);
+        assert_eq!(inner.pixels.len(), 64);
+    }
+
+    #[test]
     fn from_frame_consumes_upload_flag() {
         let frame = WebViewFrame::new();
         frame.update(4, 4, &[0u8; 64]);
         assert!(frame.needs_upload.load(Ordering::SeqCst));
         let _primitive = WebViewPrimitive::from_frame(&frame);
         assert!(!frame.needs_upload.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn second_from_frame_does_not_re_upload() {
+        let frame = WebViewFrame::new();
+        frame.update(4, 4, &[0u8; 64]);
+        let p1 = WebViewPrimitive::from_frame(&frame);
+        let p2 = WebViewPrimitive::from_frame(&frame);
+        assert!(p1.upload);
+        assert!(!p2.upload, "second primitive should not trigger upload");
     }
 
     #[test]

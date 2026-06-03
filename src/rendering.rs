@@ -39,6 +39,10 @@ pub struct GpuRenderingContext {
     // GL API handles — stored after context creation
     gleam_gl: Rc<dyn Gl>,
     glow_gl: Arc<glow::Context>,
+    // Cached FBO id for the surface currently attached to the context.
+    // Updated in new() and after each successful resize(). Using a cached value
+    // avoids a driver round-trip on every prepare_for_rendering() call.
+    fbo_id: Cell<u32>,
 }
 
 impl GpuRenderingContext {
@@ -102,6 +106,25 @@ impl GpuRenderingContext {
             SwapChain::create_attached(&*dev, &mut *ctx, SurfaceAccess::GPUOnly)?
         };
 
+        // Cache the FBO id now that the swap chain is attached. The FBO id stays
+        // stable between frames; it only changes after a successful resize().
+        let initial_fbo = current_fbo(&device.borrow(), &context.borrow()).unwrap_or_else(|| {
+            tracing::warn!("GpuRenderingContext::new: no FBO bound after swap chain creation");
+            0
+        });
+
+        // WebRender renders into an sRGB framebuffer (GL_SRGB8_ALPHA8), so
+        // glReadPixels returns sRGB-encoded bytes. WebViewPrimitive uploads them
+        // as Rgba8UnormSrgb, which is correct: the GPU sampler linearises on read.
+        // If this assumption ever breaks (e.g. on a driver that allocates a linear
+        // buffer for GLES 3.0), colours will be double-gamma-corrected and appear
+        // washed out. Use glGetFramebufferAttachmentParameteriv to verify if
+        // unexpected colour shifts are observed.
+        tracing::debug!(
+            gl_api = ?connection.gl_api(),
+            "GpuRenderingContext created; sRGB framebuffer assumed"
+        );
+
         Ok(Self {
             size: Cell::new(size),
             device,
@@ -109,7 +132,18 @@ impl GpuRenderingContext {
             swap_chain,
             gleam_gl,
             glow_gl: Arc::new(glow_gl),
+            fbo_id: Cell::new(initial_fbo),
         })
+    }
+
+    /// Re-queries the FBO id from the driver and updates the cache.
+    ///
+    /// Called after operations that replace the attached surface (resize).
+    fn update_fbo_cache(&self) {
+        match current_fbo(&self.device.borrow(), &self.context.borrow()) {
+            Some(fbo) => self.fbo_id.set(fbo),
+            None => tracing::warn!("update_fbo_cache: no surface bound to context"),
+        }
     }
 }
 
@@ -124,13 +158,17 @@ impl Drop for GpuRenderingContext {
 
 impl servo::RenderingContext for GpuRenderingContext {
     fn prepare_for_rendering(&self) {
-        let fbo = current_fbo(&self.device.borrow(), &self.context.borrow());
-        self.gleam_gl.bind_framebuffer(gl::FRAMEBUFFER, fbo);
+        self.gleam_gl
+            .bind_framebuffer(gl::FRAMEBUFFER, self.fbo_id.get());
+        debug_assert_eq!(
+            self.gleam_gl.get_error(),
+            gl::NO_ERROR,
+            "GL error after bind_framebuffer in prepare_for_rendering"
+        );
     }
 
     fn read_to_image(&self, rect: DeviceIntRect) -> Option<RgbaImage> {
-        let fbo = current_fbo(&self.device.borrow(), &self.context.borrow());
-        read_pixels_from_fbo(&self.gleam_gl, fbo, rect)
+        read_pixels_from_fbo(&self.gleam_gl, self.fbo_id.get(), rect)
     }
 
     fn size(&self) -> PhysicalSize<u32> {
@@ -145,12 +183,27 @@ impl servo::RenderingContext for GpuRenderingContext {
         if self.size.get() == size {
             return;
         }
-        self.size.set(size);
         let new_size = euclid::Size2D::new(size.width as i32, size.height as i32);
-        let device = self.device.borrow();
-        let mut context = self.context.borrow_mut();
-        if let Err(err) = self.swap_chain.resize(&*device, &mut *context, new_size) {
-            tracing::warn!("Failed to resize swap chain: {err:?}");
+
+        // Scope the borrows so they are released before update_fbo_cache borrows again.
+        let resize_ok = {
+            let device = self.device.borrow();
+            let mut context = self.context.borrow_mut();
+            match self.swap_chain.resize(&*device, &mut *context, new_size) {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("Failed to resize swap chain to {size:?}: {err:?}");
+                    false
+                }
+            }
+        };
+
+        // Only update the cached size and FBO id after the resize succeeded.
+        // If we updated size first and the resize failed, read_to_image would
+        // pass a rectangle larger than the actual surface to glReadPixels.
+        if resize_ok {
+            self.size.set(size);
+            self.update_fbo_cache();
         }
     }
 
@@ -207,20 +260,21 @@ impl servo::RenderingContext for GpuRenderingContext {
     }
 }
 
-/// Returns the FBO id for the surface currently bound to `context`, or 0 for
-/// the default framebuffer if no surface is bound.
-fn current_fbo(device: &Device, context: &Context) -> u32 {
-    device
-        .context_surface_info(context)
-        .ok()
-        .flatten()
-        .and_then(|info| info.framebuffer_object)
-        .map_or(0, |fbo: NativeFramebuffer| fbo.0.get())
+/// Returns the FBO id for the surface currently bound to `context`, or `None`
+/// if no surface is bound or `context_surface_info` fails.
+///
+/// Returns `Some(0)` if the surface has no explicit FBO (default framebuffer).
+fn current_fbo(device: &Device, context: &Context) -> Option<u32> {
+    let info = device.context_surface_info(context).ok()??;
+    Some(
+        info.framebuffer_object
+            .map_or(0, |fbo: NativeFramebuffer| fbo.0.get()),
+    )
 }
 
 /// Reads RGBA pixels from `fbo_id` within `rect` into an [`RgbaImage`].
 ///
-/// Flips the image vertically because OpenGL stores rows bottom-up.
+/// Flips the image vertically in-place because OpenGL stores rows bottom-up.
 fn read_pixels_from_fbo(gl: &Rc<dyn Gl>, fbo_id: u32, rect: DeviceIntRect) -> Option<RgbaImage> {
     gl.bind_framebuffer(gl::FRAMEBUFFER, fbo_id);
     // Unbind vertex array to work around an OSMesa sync bug (servo/servo#18606).
@@ -242,13 +296,15 @@ fn read_pixels_from_fbo(gl: &Rc<dyn Gl>, fbo_id: u32, rect: DeviceIntRect) -> Op
         tracing::warn!("GL error 0x{error:x} after read_pixels");
     }
 
-    // Flip vertically: GL rows are bottom-up, image rows are top-down.
+    // Flip vertically in-place: GL rows are bottom-up, image rows are top-down.
+    // Swap rows from the outside in using split_at_mut to avoid an O(n) clone.
     let stride = width * 4;
-    let original = pixels.clone();
-    for y in 0..height {
-        let dst = y * stride;
-        let src = (height - y - 1) * stride;
-        pixels[dst..dst + stride].copy_from_slice(&original[src..src + stride]);
+    for y in 0..(height / 2) {
+        let top = y * stride;
+        let bot = (height - y - 1) * stride;
+        // split_at_mut requires non-overlapping ranges; bot > top always holds here.
+        let (head, tail) = pixels.split_at_mut(bot);
+        head[top..top + stride].swap_with_slice(&mut tail[..stride]);
     }
 
     RgbaImage::from_raw(width as u32, height as u32, pixels)
