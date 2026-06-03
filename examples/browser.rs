@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use cosmic_webview::{ServoState, WebViewFrame, WebViewWidget};
+use cosmic_webview::{DialogMsg, ServoState, WebViewFrame, WebViewWidget};
 use dpi::PhysicalSize;
 use libcosmic::app::{Core, Settings, Task};
 use libcosmic::executor;
@@ -127,6 +127,8 @@ pub enum Message {
     Paste,
     /// User selected an item from Servo's context menu.
     ServoContextMenuSelected(ContextMenuAction),
+    /// Forwarded from the built-in dialog handler in ServoState.
+    Dialog(DialogMsg),
     /// The webview widget has been laid out at a new physical size.
     WebViewResized(u32, u32),
     /// HiDPI scale factor changed — update coordinate conversion factor.
@@ -241,9 +243,18 @@ impl libcosmic::Application for Browser {
                 // Pick up context-sensitive menu items from Servo. These arrive
                 // one frame after the right-click. The context_menu overlay reads
                 // items on every render, so the popup updates automatically.
-                if let Some(EmbedderControl::ContextMenu(menu)) = self.servo.take_dialog() {
-                    self.servo_context_items = menu.items().to_vec();
-                    self.servo_context_menu = Some(menu);
+                // Other controls are routed to the built-in dialog handler.
+                match self.servo.take_dialog() {
+                    Some(EmbedderControl::ContextMenu(menu)) => {
+                        self.servo_context_items = menu.items().to_vec();
+                        self.servo_context_menu = Some(menu);
+                    }
+                    Some(control) => {
+                        if let Some(task) = self.servo.handle_dialog_control(control) {
+                            return task.map(|msg| libcosmic::action::app(Message::Dialog(msg)));
+                        }
+                    }
+                    None => {}
                 }
 
                 if !self.url_bar_focused
@@ -308,6 +319,9 @@ impl libcosmic::Application for Browser {
                 }
                 self.servo_context_items.clear();
             }
+            Message::Dialog(msg) => {
+                self.servo.update_dialog(msg);
+            }
             Message::WebViewResized(w, h) => {
                 self.servo.resize(PhysicalSize::new(w, h));
             }
@@ -341,6 +355,10 @@ impl libcosmic::Application for Browser {
             .width(Length::Fill);
 
         vec![url_bar.into()]
+    }
+
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        self.servo.dialog_view().map(|e| e.map(Message::Dialog))
     }
 
     fn view(&self) -> Element<'_, Message> {

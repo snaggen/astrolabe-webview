@@ -43,6 +43,11 @@ name = "browser"
 required-features = ["browser-example"]
 
 [features]
+# Enable the XDG desktop portal file chooser (Wayland-native, requires D-Bus).
+# Without this feature FilePicker controls are auto-dismissed.
+xdg-portal = ["libcosmic/xdg-portal"]
+
 browser-example = [
     "libcosmic/winit",
+    "xdg-portal",
 ]

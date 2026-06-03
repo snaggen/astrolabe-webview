@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebView Integration Tests</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #f5f5f5;
+    color: #1a1a1a;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 20px; color: #1565c0; }
+  h2 { font-size: 1rem; margin-bottom: 10px; color: #1976d2; }
+  .section {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  button, label.btn {
+    background: #1976d2;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: inline-block;
+  }
+  button:hover, label.btn:hover { background: #1565c0; }
+  .result {
+    font-size: 0.85rem;
+    color: #2e7d32;
+    background: #f1f8e9;
+    border: 1px solid #c8e6c9;
+    border-radius: 4px;
+    padding: 4px 8px;
+    min-height: 1.4em;
+    word-break: break-all;
+  }
+  input[type="color"] { width: 48px; height: 32px; border: 1px solid #ccc; cursor: pointer; border-radius: 4px; }
+  select { background: #fff; color: #1a1a1a; border: 1px solid #ccc; border-radius: 6px; padding: 5px 8px; }
+  .context-zone {
+    background: #fafafa;
+    border: 1px dashed #bbb;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: #555;
+  }
+  a { color: #1976d2; }
+  img.test-img { width: 80px; height: 50px; border-radius: 4px; }
+  .tag {
+    font-size: 0.7rem;
+    background: #e3f2fd;
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: #1565c0;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<h1>WebView Embedder Integration Tests</h1>
+
+<!-- ── FilePicker ─────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>FilePicker <span class="tag">&lt;input type=file&gt;</span></h2>
+  <div class="row">
+    <label class="btn" for="file-single">Single file</label>
+    <input type="file" id="file-single" style="display:none"
+           onchange="show('res-file-single', 'Selected: ' + [...this.files].map(f=>f.name).join(', '))">
+    <div class="result" id="res-file-single">—</div>
+  </div>
+  <div class="row">
+    <label class="btn" for="file-multi">Multiple files</label>
+    <input type="file" id="file-multi" multiple style="display:none"
+           onchange="show('res-file-multi', 'Selected: ' + [...this.files].map(f=>f.name).join(', '))">
+    <div class="result" id="res-file-multi">—</div>
+  </div>
+  <div class="row">
+    <label class="btn" for="file-filtered">Text/PDF only</label>
+    <input type="file" id="file-filtered" accept=".txt,.pdf,.md" style="display:none"
+           onchange="show('res-file-filtered', 'Selected: ' + [...this.files].map(f=>f.name).join(', '))">
+    <div class="result" id="res-file-filtered">—</div>
+  </div>
+</div>
+
+<!-- ── SimpleDialog ───────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>SimpleDialog <span class="tag">alert / confirm / prompt</span></h2>
+  <div class="row">
+    <button onclick="alert('Hello from alert()!'); show('res-alert', 'Dialog closed')">
+      alert()
+    </button>
+    <div class="result" id="res-alert">—</div>
+  </div>
+  <div class="row">
+    <button onclick="show('res-confirm', 'Result: ' + confirm('Do you confirm this action?'))">
+      confirm()
+    </button>
+    <div class="result" id="res-confirm">—</div>
+  </div>
+  <div class="row">
+    <button onclick="var r=prompt('Enter your name:', 'World'); show('res-prompt', r===null ? 'Cancelled' : 'Got: ' + r)">
+      prompt()
+    </button>
+    <div class="result" id="res-prompt">—</div>
+  </div>
+</div>
+
+<!-- ── ColorPicker ────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>ColorPicker <span class="tag">&lt;input type=color&gt;</span></h2>
+  <p style="font-size:0.8rem;color:#666;margin-bottom:10px">
+    Note: <code>oninput</code>/<code>onchange</code> events are not fired by our embedder
+    (we send one final value, not incremental updates). Use the Read button to verify
+    the color was received.
+  </p>
+  <div class="row">
+    <label>Pick a color:</label>
+    <input type="color" id="color1" value="#e53935">
+    <button onclick="show('res-color1', 'Value: ' + document.getElementById('color1').value)">Read</button>
+    <div class="result" id="res-color1">—</div>
+  </div>
+  <div class="row">
+    <label>Another color:</label>
+    <input type="color" id="color2" value="#1e88e5">
+    <button onclick="show('res-color2', 'Value: ' + document.getElementById('color2').value)">Read</button>
+    <div class="result" id="res-color2">—</div>
+  </div>
+</div>
+
+<!-- ── SelectElement ──────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>SelectElement <span class="tag">&lt;select&gt;</span></h2>
+  <div class="row">
+    <label>Simple:</label>
+    <select id="sel-simple" onchange="show('res-sel-simple', 'Selected: ' + this.value)">
+      <option value="apple">Apple</option>
+      <option value="banana">Banana</option>
+      <option value="cherry">Cherry</option>
+      <option value="date">Date</option>
+    </select>
+    <div class="result" id="res-sel-simple">—</div>
+  </div>
+  <div class="row">
+    <label>With optgroups:</label>
+    <select id="sel-groups" onchange="show('res-sel-groups', 'Selected: ' + this.value)">
+      <optgroup label="Fruits">
+        <option value="apple">Apple</option>
+        <option value="banana">Banana</option>
+      </optgroup>
+      <optgroup label="Vegetables">
+        <option value="carrot">Carrot</option>
+        <option value="broccoli">Broccoli</option>
+      </optgroup>
+    </select>
+    <div class="result" id="res-sel-groups">—</div>
+  </div>
+  <div class="row">
+    <label>Multi-select:</label>
+    <select id="sel-multi" multiple size="4"
+            onchange="show('res-sel-multi', 'Selected: ' + [...this.selectedOptions].map(o=>o.value).join(', '))">
+      <option value="red">Red</option>
+      <option value="green">Green</option>
+      <option value="blue">Blue</option>
+      <option value="yellow">Yellow</option>
+    </select>
+    <div class="result" id="res-sel-multi">—</div>
+  </div>
+</div>
+
+<!-- ── ContextMenu ────────────────────────────────────────────────────── -->
+<div class="section">
+  <h2>ContextMenu <span class="tag">right-click</span></h2>
+  <div class="context-zone">
+    Right-click anywhere in this box, on the link, or on the image to test context menus.
+    <br><br>
+    <a href="https://servo.org">Servo project link</a>
+    &nbsp;&nbsp;
+    <img class="test-img"
+         src="https://servo.org/img/home-servo-hero.png"
+         alt="Servo hero">
+    <br><br>
+    <textarea rows="2" style="width:100%;background:#fff;border:1px solid #ccc;padding:6px 8px;border-radius:4px;color:#1a1a1a;resize:vertical;font-family:inherit">Select this text and right-click to test the context menu for editable content.</textarea>
+  </div>
+</div>
+
+<script>
+function show(id, msg) {
+  document.getElementById(id).textContent = msg;
+}
+</script>
+</body>
+</html>

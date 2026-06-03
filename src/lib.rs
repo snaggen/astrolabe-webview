@@ -14,6 +14,7 @@
 //! ```
 
 mod delegate;
+pub mod dialog_handler;
 pub mod dialogs;
 pub(crate) mod input;
 pub mod primitive;
@@ -23,6 +24,7 @@ mod waker;
 mod widget;
 
 // Public API
+pub use dialog_handler::DialogMsg;
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::ServoState;

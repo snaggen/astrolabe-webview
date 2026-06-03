@@ -9,6 +9,7 @@ use servo::{
 use url::Url;
 
 use crate::delegate::{CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
+use crate::dialog_handler::{DialogHandler, DialogMsg};
 use crate::rendering::ActiveRenderingContext;
 use crate::waker::IcedEventLoopWaker;
 
@@ -33,6 +34,7 @@ pub struct ServoState {
     rendering_ctx: ActiveRenderingContext,
     shared: Rc<SharedState>,
     waker_rx: async_channel::Receiver<()>,
+    dialog_handler: DialogHandler,
 }
 
 impl ServoState {
@@ -83,6 +85,7 @@ impl ServoState {
             rendering_ctx,
             shared,
             waker_rx: rx.clone(),
+            dialog_handler: DialogHandler::new(),
         };
         (state, rx)
     }
@@ -150,6 +153,47 @@ impl ServoState {
     /// the user responds. Dropping the control sends the default reply.
     pub fn take_dialog(&self) -> Option<EmbedderControl> {
         self.shared.pending_dialog.borrow_mut().take()
+    }
+
+    /// Route the pending dialog control (if any) to the built-in dialog handler.
+    ///
+    /// Call this after [`Self::spin`]. If the control is a `FilePicker`, the
+    /// handler returns `Some(task)` — return it from your `update()`:
+    ///
+    /// ```ignore
+    /// if let Some(task) = self.servo.handle_dialog_control(control) {
+    ///     return task.map(|msg| libcosmic::action::app(Message::Dialog(msg)));
+    /// }
+    /// ```
+    ///
+    /// For `ContextMenu`, call [`Self::take_dialog`] directly — the built-in
+    /// handler does not manage context menus (they require custom UI placement).
+    pub fn handle_dialog_control(
+        &mut self,
+        control: EmbedderControl,
+    ) -> Option<libcosmic::iced::Task<DialogMsg>> {
+        self.dialog_handler.accept(control)
+    }
+
+    /// Forward a [`DialogMsg`] produced by the built-in dialog widgets to the
+    /// handler. Call this from your `update()`:
+    ///
+    /// ```ignore
+    /// Message::Dialog(msg) => self.servo.update_dialog(msg),
+    /// ```
+    pub fn update_dialog(&mut self, msg: DialogMsg) {
+        self.dialog_handler.update(msg);
+    }
+
+    /// Build the current pending dialog element for `Application::dialog()`.
+    ///
+    /// ```ignore
+    /// fn dialog(&self) -> Option<Element<'_, Message>> {
+    ///     self.servo.dialog_view().map(|e| e.map(Message::Dialog))
+    /// }
+    /// ```
+    pub fn dialog_view(&self) -> Option<libcosmic::Element<'_, DialogMsg>> {
+        self.dialog_handler.view()
     }
 
     /// Takes the pending HTTP authentication request, if any.
