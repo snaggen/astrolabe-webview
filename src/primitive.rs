@@ -345,7 +345,9 @@ impl Primitive for WebViewPrimitive {
         _bounds: &iced_wgpu::core::Rectangle,
         _viewport: &iced_wgpu::graphics::Viewport,
     ) {
-        if self.upload && let Ok(pixels) = self.pixels.lock() {
+        if self.upload
+            && let Ok(pixels) = self.pixels.lock()
+        {
             pipeline.upload(device, queue, self.id, &self.alive, self.size, &pixels);
         }
     }

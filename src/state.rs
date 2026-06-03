@@ -175,6 +175,26 @@ impl ServoState {
         self.shared.is_fullscreen.get()
     }
 
+    /// Returns the most recent URL reported by the page, if any.
+    pub fn current_url(&self) -> Option<Url> {
+        self.shared.current_url.borrow().clone()
+    }
+
+    /// Returns the most recent page title reported by the page, if any.
+    pub fn title(&self) -> Option<String> {
+        self.shared.title.borrow().clone()
+    }
+
+    /// Returns `true` when there is a previous entry to go back to.
+    pub fn can_go_back(&self) -> bool {
+        self.shared.can_go_back.get()
+    }
+
+    /// Returns `true` when there is a next entry to go forward to.
+    pub fn can_go_forward(&self) -> bool {
+        self.shared.can_go_forward.get()
+    }
+
     /// Takes the crash info if a pipeline has panicked since the last call.
     ///
     /// Returns `Some((reason, backtrace))`. The app should show a reload

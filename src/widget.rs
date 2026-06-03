@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use iced_wgpu::primitive::Renderer as PrimitiveRenderer;
-use libcosmic::iced::advanced::widget::Tree;
+use libcosmic::iced::advanced::widget::{Tree, tree};
 use libcosmic::iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer,
 };
@@ -10,6 +10,15 @@ use servo::InputEvent;
 
 use crate::input;
 use crate::primitive::{WebViewFrame, WebViewPrimitive};
+
+/// Per-widget state held in the iced [`Tree`].
+///
+/// Tracks the last physical size sent to the embedder so that `on_resize`
+/// only fires when the layout actually changes.
+#[derive(Default)]
+struct WebViewState {
+    last_phys_size: (u32, u32),
+}
 
 /// A read-only iced widget that displays the current Servo WebView frame and
 /// forwards mouse and keyboard input to Servo.
@@ -42,6 +51,12 @@ pub struct WebViewWidget<'a, Message> {
     height: Length,
     /// HiDPI scale factor — converts logical cursor positions to device pixels.
     scale: f32,
+    /// When `false`, keyboard events are not forwarded to Servo.
+    keyboard_enabled: bool,
+    /// Fired with `(physical_width, physical_height)` when the widget's layout
+    /// size changes. Use this to call [`ServoState::resize`] with exact bounds
+    /// rather than the full window size.
+    on_resize: Option<Box<dyn Fn(u32, u32) -> Message + 'a>>,
     /// Callback that wraps a [`InputEvent`] into the app's `Message` type.
     on_input: Option<Box<dyn Fn(InputEvent) -> Message + 'a>>,
     _phantom: PhantomData<Message>,
@@ -57,6 +72,8 @@ impl<'a, Message> WebViewWidget<'a, Message> {
             width: Length::Fill,
             height: Length::Fill,
             scale: 1.0,
+            keyboard_enabled: true,
+            on_resize: None,
             on_input: None,
             _phantom: PhantomData,
         }
@@ -81,6 +98,27 @@ impl<'a, Message> WebViewWidget<'a, Message> {
         self
     }
 
+    /// Controls whether keyboard events are forwarded to Servo.
+    ///
+    /// Set to `false` while a URL bar or other text field in the embedding
+    /// app has focus, so that typing goes to the right place. Defaults to
+    /// `true`.
+    pub fn keyboard_enabled(mut self, enabled: bool) -> Self {
+        self.keyboard_enabled = enabled;
+        self
+    }
+
+    /// Registers a callback that fires with the widget's physical pixel size
+    /// whenever the layout changes.
+    ///
+    /// Use this to keep Servo's rendering resolution in sync with the actual
+    /// widget bounds — which may differ from the full window size if the app
+    /// has a header bar or other chrome.
+    pub fn on_resize(mut self, f: impl Fn(u32, u32) -> Message + 'a) -> Self {
+        self.on_resize = Some(Box::new(f));
+        self
+    }
+
     /// Registers a callback that fires whenever a mouse or keyboard event
     /// occurs inside the widget.
     ///
@@ -96,6 +134,14 @@ impl<'a, Message> WebViewWidget<'a, Message> {
 impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
     for WebViewWidget<'a, Message>
 {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<WebViewState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(WebViewState::default())
+    }
+
     fn size(&self) -> Size<Length> {
         Size::new(self.width, self.height)
     }
@@ -143,7 +189,7 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
 
     fn update(
         &mut self,
-        _state: &mut Tree,
+        state: &mut Tree,
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -152,19 +198,31 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
+        let bounds = layout.bounds();
+        let scale = self.scale;
+
+        // Notify the embedder when the widget's physical size changes so
+        // Servo renders at the exact widget resolution, not the full window size.
+        if let Some(on_resize) = &self.on_resize {
+            let phys_w = (bounds.width * scale).round() as u32;
+            let phys_h = (bounds.height * scale).round() as u32;
+            let wstate = state.state.downcast_mut::<WebViewState>();
+            if (phys_w, phys_h) != wstate.last_phys_size && phys_w > 0 && phys_h > 0 {
+                wstate.last_phys_size = (phys_w, phys_h);
+                shell.publish(on_resize(phys_w, phys_h));
+            }
+        }
+
         let Some(on_input) = &self.on_input else {
             return;
         };
-
-        let bounds = layout.bounds();
-        let scale = self.scale;
 
         let servo_event = match event {
             Event::Mouse(me) => {
                 let pos_in_bounds = cursor.position_in(bounds);
                 input::mouse_event_to_servo(me, pos_in_bounds, scale)
             }
-            Event::Keyboard(ke) => input::keyboard_event_to_servo(ke),
+            Event::Keyboard(ke) if self.keyboard_enabled => input::keyboard_event_to_servo(ke),
             _ => None,
         };
 

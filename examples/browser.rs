@@ -1,4 +1,4 @@
-//! Minimal libcosmic browser — verifies that WebViewWidget renders a Servo frame.
+//! Minimal libcosmic browser — demonstrates the full WebViewWidget.
 //!
 //! Run with:
 //!   cargo run --example browser --features browser-example
@@ -8,59 +8,80 @@ use cosmic_webview::{ServoState, WebViewFrame, WebViewWidget};
 use dpi::PhysicalSize;
 use libcosmic::app::{Core, Settings, Task};
 use libcosmic::executor;
-use libcosmic::iced::{Event, Subscription, window};
+use libcosmic::iced::{Event, Length, Subscription, window};
 use libcosmic::prelude::*;
+use libcosmic::widget;
 use servo::InputEvent;
 use url::Url;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let settings = Settings::default();
+    let settings = Settings::default().size((1280, 800).into());
     libcosmic::app::run::<Browser>(settings, ())?;
     Ok(())
 }
 
 #[derive(Clone, Debug)]
 pub enum Message {
+    /// Servo needs to spin its event loop.
     ServoWake,
-    /// A mouse or keyboard event from the webview widget to forward to Servo.
+    /// A mouse or keyboard event to forward to Servo.
     Input(InputEvent),
-    /// Window was resized to new logical pixel dimensions.
-    WindowResized(f32, f32),
-    /// HiDPI scale factor changed.
+    /// The URL bar gained focus — suspend keyboard forwarding to Servo.
+    UrlBarFocused,
+    /// The URL bar lost focus — resume keyboard forwarding to Servo.
+    UrlBarUnfocused,
+    /// The user edited the URL bar.
+    UrlBarChanged(String),
+    /// The user pressed Enter in the URL bar.
+    Navigate,
+    GoBack,
+    GoForward,
+    Reload,
+    /// The webview widget has been laid out at a new physical size.
+    /// Used to keep Servo's rendering resolution in sync with actual widget bounds.
+    WebViewResized(u32, u32),
+    /// HiDPI scale factor changed — update coordinate conversion factor.
     ScaleChanged(f32),
 }
 
 pub struct Browser {
     core: Core,
     servo: ServoState,
-    /// Persistent GPU texture buffer — updated in-place, no double-buffering needed.
+    /// Persistent GPU texture — updated in-place each frame.
     frame: WebViewFrame,
-    /// Current window size in logical pixels.
-    logical_size: (f32, f32),
-    /// Current HiDPI scale factor (logical → physical).
+    /// Text currently shown in the URL bar.
+    url_bar: String,
+    /// Whether the URL bar currently holds iced keyboard focus.
+    ///
+    /// Driven symmetrically by `on_focus`/`on_unfocus` on the text input.
+    /// When `true`, keyboard events are suppressed in the webview widget.
+    url_bar_focused: bool,
+    /// HiDPI scale factor — for converting logical cursor positions to physical.
     scale: f32,
 }
 
-// Newtype wrapper so async_channel::Receiver<()> satisfies the Hash bound
-// required by Subscription::run_with.
+// Newtype so async_channel::Receiver<()> satisfies Hash for Subscription::run_with.
 #[derive(Clone)]
 struct ServoRx(async_channel::Receiver<()>);
 
 impl std::hash::Hash for ServoRx {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // One subscription per app; type ID provides stable identity.
         std::any::TypeId::of::<Self>().hash(state);
     }
 }
 
 impl Browser {
-    /// Computes the current physical size and tells Servo to re-render at that size.
-    fn sync_servo_size(&self) {
-        let (lw, lh) = self.logical_size;
-        let w = (lw * self.scale).round() as u32;
-        let h = (lh * self.scale).round() as u32;
-        if w > 0 && h > 0 {
-            self.servo.resize(PhysicalSize::new(w, h));
+    fn try_navigate(&mut self) {
+        let raw = self.url_bar.trim().to_owned();
+        // Treat bare hostnames as https:// URLs.
+        let with_scheme = if raw.contains("://") {
+            raw.clone()
+        } else {
+            format!("https://{raw}")
+        };
+        if let Ok(url) = Url::parse(&with_scheme) {
+            self.url_bar = url.to_string();
+            self.servo.navigate(url);
         }
     }
 }
@@ -81,16 +102,15 @@ impl libcosmic::Application for Browser {
     }
 
     fn init(core: Core, _flags: ()) -> (Self, Task<Message>) {
-        // Use a reasonable default; Servo will be resized on the first
-        // WindowResized event before any frame is visible.
-        let size = PhysicalSize::new(1024u32, 768);
-        let url = Url::parse("https://servo.org").expect("valid url");
-        let (servo, _rx) = ServoState::new(url, size);
+        let initial_url = Url::parse("https://servo.org").expect("valid url");
+        let size = PhysicalSize::new(1280u32, 800);
+        let (servo, _rx) = ServoState::new(initial_url.clone(), size);
         let app = Browser {
             core,
             servo,
             frame: WebViewFrame::new(),
-            logical_size: (1024.0, 768.0),
+            url_bar: initial_url.to_string(),
+            url_bar_focused: false,
             scale: 1.0,
         };
         (app, Task::none())
@@ -105,9 +125,6 @@ impl libcosmic::Application for Browser {
         });
 
         let window_sub = event::listen_with(|event, _status, _id| match event {
-            Event::Window(window::Event::Resized(size)) => {
-                Some(Message::WindowResized(size.width, size.height))
-            }
             Event::Window(window::Event::Rescaled(factor)) => Some(Message::ScaleChanged(factor)),
             _ => None,
         });
@@ -120,31 +137,96 @@ impl libcosmic::Application for Browser {
             Message::ServoWake => {
                 self.servo.spin();
 
+                // Only update the URL bar when it is not focused — otherwise
+                // Servo's URL reports would overwrite what the user is typing.
+                if !self.url_bar_focused
+                    && let Some(url) = self.servo.current_url()
+                {
+                    self.url_bar = url.to_string();
+                }
+
+                // Update window title from page title.
+                let title = self.servo.title().unwrap_or_default();
+                self.set_header_title(title);
+
                 // Push the newest frame into the persistent GPU buffer.
                 if let Some(img) = self.servo.current_frame().as_ref() {
                     let (w, h) = img.dimensions();
                     self.frame.update(w, h, img.as_raw());
                 }
+
+                // Log crashes — a real browser would show an error page.
+                if let Some((reason, _bt)) = self.servo.take_crash() {
+                    tracing::error!("WebView crashed: {reason}");
+                }
             }
             Message::Input(event) => {
                 self.servo.send_input(event);
             }
-            Message::WindowResized(w, h) => {
-                self.logical_size = (w, h);
-                self.sync_servo_size();
+            Message::UrlBarFocused => {
+                self.url_bar_focused = true;
+            }
+            Message::UrlBarUnfocused => {
+                self.url_bar_focused = false;
+            }
+            Message::UrlBarChanged(text) => {
+                self.url_bar = text;
+            }
+            Message::Navigate => {
+                self.try_navigate();
+            }
+            Message::GoBack => {
+                self.servo.go_back();
+            }
+            Message::GoForward => {
+                self.servo.go_forward();
+            }
+            Message::Reload => {
+                self.servo.reload();
+            }
+            Message::WebViewResized(w, h) => {
+                self.servo.resize(PhysicalSize::new(w, h));
             }
             Message::ScaleChanged(factor) => {
                 self.scale = factor;
-                self.sync_servo_size();
             }
         }
         Task::none()
+    }
+
+    // Nav buttons go in the header bar start section.
+    fn header_start(&self) -> Vec<Element<'_, Message>> {
+        let back = widget::button::icon(widget::icon::from_name("go-previous-symbolic"))
+            .on_press_maybe(self.servo.can_go_back().then_some(Message::GoBack));
+
+        let forward = widget::button::icon(widget::icon::from_name("go-next-symbolic"))
+            .on_press_maybe(self.servo.can_go_forward().then_some(Message::GoForward));
+
+        let reload = widget::button::icon(widget::icon::from_name("view-refresh-symbolic"))
+            .on_press(Message::Reload);
+
+        vec![back.into(), forward.into(), reload.into()]
+    }
+
+    // URL bar goes in the header center so it stretches to fill available space.
+    fn header_center(&self) -> Vec<Element<'_, Message>> {
+        let url_bar = widget::text_input("https://example.com", &self.url_bar)
+            .on_focus(Message::UrlBarFocused)
+            .on_unfocus(Message::UrlBarUnfocused)
+            .on_input(Message::UrlBarChanged)
+            .on_submit(|_| Message::Navigate)
+            .select_on_focus(true)
+            .width(Length::Fill);
+
+        vec![url_bar.into()]
     }
 
     fn view(&self) -> Element<'_, Message> {
         WebViewWidget::new(&self.frame)
             .scale(self.scale)
             .on_input(Message::Input)
+            .on_resize(Message::WebViewResized)
+            .keyboard_enabled(!self.url_bar_focused)
             .into()
     }
 }

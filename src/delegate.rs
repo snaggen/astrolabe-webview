@@ -7,6 +7,7 @@ use servo::{
     EmbedderControlId, LoadStatus, RenderingContext, RgbaImage, ServoDelegate, ServoError, WebView,
     WebViewDelegate,
 };
+use url::Url;
 
 /// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
@@ -29,6 +30,14 @@ pub(crate) struct SharedState {
     pub is_fullscreen: Cell<bool>,
     /// Crash info set when a pipeline panics: `(reason, backtrace)`.
     pub crashed: RefCell<Option<(String, Option<String>)>>,
+    /// Most recent URL reported by the page.
+    pub current_url: RefCell<Option<Url>>,
+    /// Most recent page title reported by the page.
+    pub title: RefCell<Option<String>>,
+    /// Whether the session history has a previous entry to go back to.
+    pub can_go_back: Cell<bool>,
+    /// Whether the session history has a next entry to go forward to.
+    pub can_go_forward: Cell<bool>,
 }
 
 impl SharedState {
@@ -42,6 +51,10 @@ impl SharedState {
             cursor: Cell::new(Cursor::Default),
             is_fullscreen: Cell::new(false),
             crashed: RefCell::new(None),
+            current_url: RefCell::new(None),
+            title: RefCell::new(None),
+            can_go_back: Cell::new(false),
+            can_go_forward: Cell::new(false),
         })
     }
 }
@@ -135,6 +148,21 @@ impl WebViewDelegate for CosmicWebViewDelegate {
     ) {
         *self.shared.pending_auth.borrow_mut() = Some(authentication_request);
         let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_url_changed(&self, _webview: WebView, url: Url) {
+        *self.shared.current_url.borrow_mut() = Some(url);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_page_title_changed(&self, _webview: WebView, title: Option<String>) {
+        *self.shared.title.borrow_mut() = title;
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_history_changed(&self, _webview: WebView, entries: Vec<Url>, current: usize) {
+        self.shared.can_go_back.set(current > 0);
+        self.shared.can_go_forward.set(current + 1 < entries.len());
     }
 
     fn show_console_message(&self, _webview: WebView, level: ConsoleLogLevel, message: String) {
