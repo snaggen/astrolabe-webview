@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 description = "Servo-based WebView widget for the COSMIC Desktop environment"
-license = "MPL-2.0"
+license = "EUPL-1.2"
 
 [dependencies]
 # Web engine — servo 0.2.0 is not yet published on crates.io; pinned to a
