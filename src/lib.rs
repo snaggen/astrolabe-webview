@@ -30,3 +30,10 @@ pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::ServoState;
 pub use waker::IcedEventLoopWaker;
 pub use widget::WebViewWidget;
+
+// Re-export servo types that embedding applications need directly.
+// This removes the need for embedders to add servo as a direct dependency.
+pub use servo::{
+    ContextMenu, ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl,
+    InputEvent, LoadStatus,
+};
