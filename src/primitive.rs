@@ -301,10 +301,13 @@ impl WebViewPipeline {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                // Rgba8UnormSrgb: WebRender renders into an sRGB framebuffer, so
-                // glReadPixels returns sRGB-encoded bytes. Uploading as sRGB lets
-                // the GPU sampler linearise on read, which is correct.
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                // Rgba8Unorm: glReadPixels returns linear bytes regardless of
+                // whether the GL framebuffer is sRGB-capable (OpenGL linearises
+                // on read from sRGB attachments; non-sRGB attachments already
+                // store linear values). Using Rgba8UnormSrgb would cause wgpu to
+                // linearise again on sample, doubling the gamma correction and
+                // making images too dark.
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
