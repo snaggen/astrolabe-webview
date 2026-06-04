@@ -205,7 +205,7 @@ impl libcosmic::Application for Browser {
     fn init(core: Core, _flags: ()) -> (Self, Task<Message>) {
         let initial_url = Url::parse("https://servo.org").expect("valid url");
         let size = PhysicalSize::new(1280u32, 800);
-        let (servo, _rx) = ServoState::new(initial_url.clone(), size);
+        let (servo, _rx) = ServoState::new(initial_url.clone(), size, 1.0);
         let app = Browser {
             core,
             servo,

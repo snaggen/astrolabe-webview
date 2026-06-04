@@ -2,9 +2,10 @@ use std::cell::Ref;
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
+use euclid::Scale;
 use servo::{
-    AuthenticationRequest, Cursor, EmbedderControl, InputEvent, LoadStatus, RgbaImage,
-    ServoBuilder, WebViewBuilder,
+    AuthenticationRequest, Cursor, DeviceIndependentPixel, DevicePixel, EmbedderControl,
+    InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder,
 };
 use url::Url;
 
@@ -26,7 +27,7 @@ use crate::waker::IcedEventLoopWaker;
 /// use url::Url;
 ///
 /// let url = Url::parse("https://example.com").unwrap();
-/// let (state, rx) = ServoState::new(url, PhysicalSize::new(1024_u32, 768));
+/// let (state, rx) = ServoState::new(url, PhysicalSize::new(1024_u32, 768), 1.0);
 /// ```
 pub struct ServoState {
     servo: servo::Servo,
@@ -40,12 +41,21 @@ pub struct ServoState {
 impl ServoState {
     /// Creates a Servo instance loaded with `initial_url`.
     ///
+    /// `scale_factor` is the HiDPI scale of the display (e.g. `1.0`, `1.5`, `2.0`).
+    /// Pass the value from `Settings::scale_factor` or `COSMIC_SCALE`. Servo uses
+    /// this to derive the CSS viewport size from physical pixels; a wrong value
+    /// makes web content appear too small or too large.
+    ///
     /// Returns the state and a channel receiver. Pass the receiver to an iced
     /// `Subscription` that emits `Message::ServoWake`, then call
     /// [`ServoState::spin`] in `App::update` on each wake.
-    pub fn new(initial_url: Url, size: PhysicalSize<u32>) -> (Self, async_channel::Receiver<()>) {
+    pub fn new(
+        initial_url: Url,
+        size: PhysicalSize<u32>,
+        scale_factor: f32,
+    ) -> (Self, async_channel::Receiver<()>) {
         let rendering_ctx = ActiveRenderingContext::create(size);
-        Self::new_with_context(initial_url, rendering_ctx)
+        Self::new_with_context(initial_url, rendering_ctx, scale_factor)
     }
 
     /// Creates a Servo instance with a pre-built rendering context.
@@ -55,6 +65,7 @@ impl ServoState {
     pub(crate) fn new_with_context(
         initial_url: Url,
         rendering_ctx: ActiveRenderingContext,
+        scale_factor: f32,
     ) -> (Self, async_channel::Receiver<()>) {
         // Ignore error if a provider is already installed (e.g. in tests).
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -76,6 +87,7 @@ impl ServoState {
 
         let webview = WebViewBuilder::new(&servo, rendering_ctx.as_rc())
             .url(initial_url)
+            .hidpi_scale_factor(Scale::new(scale_factor))
             .delegate(delegate)
             .build();
 
@@ -102,6 +114,15 @@ impl ServoState {
     pub fn resize(&self, size: PhysicalSize<u32>) {
         self.webview.resize(size);
         self.rendering_ctx.as_rc().resize(size);
+    }
+
+    /// Update the HiDPI scale factor at runtime (e.g. when the window moves to
+    /// a display with a different DPI). Servo re-derives the CSS viewport size
+    /// from the current physical size and the new scale factor.
+    pub fn set_scale_factor(&self, factor: f32) {
+        self.webview.set_hidpi_scale_factor(
+            Scale::<f32, DeviceIndependentPixel, DevicePixel>::new(factor),
+        );
     }
 
     pub fn go_back(&self) {
@@ -261,7 +282,7 @@ mod tests {
         let url = Url::parse("about:blank").expect("valid url");
         // Use software rendering — matches Servo's own integration test suite.
         let ctx = ActiveRenderingContext::software(size);
-        let (state, _rx) = ServoState::new_with_context(url, ctx);
+        let (state, _rx) = ServoState::new_with_context(url, ctx, 1.0);
 
         let deadline = Instant::now() + Duration::from_secs(30);
         while state.load_status() != LoadStatus::Complete {

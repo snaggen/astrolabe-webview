@@ -10,7 +10,7 @@
 //!
 //! let url = Url::parse("https://example.com").unwrap();
 //! let size = PhysicalSize::new(1024_u32, 768);
-//! let (state, waker_rx) = ServoState::new(url, size);
+//! let (state, waker_rx) = ServoState::new(url, size, 1.0);
 //! ```
 
 mod delegate;
