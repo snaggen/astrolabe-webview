@@ -1,4 +1,4 @@
-use std::cell::Ref;
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
@@ -14,10 +14,21 @@ use crate::dialog_handler::{DialogHandler, DialogMsg};
 use crate::rendering::ActiveRenderingContext;
 use crate::waker::IcedEventLoopWaker;
 
-/// Owns and drives the Servo engine.
+// The Servo engine is a process-wide singleton on the main thread.
+// `Servo(Rc<ServoInner>)` is !Send so thread_local is the right mechanism.
+// All ServoState instances share the same engine via cheap Rc clones.
+thread_local! {
+    static ENGINE: RefCell<Option<(servo::Servo, IcedEventLoopWaker, async_channel::Receiver<()>)>> =
+        const { RefCell::new(None) };
+}
+
+/// Drives a single browser tab: one WebView, one rendering context, one frame buffer.
 ///
-/// Create with [`ServoState::new`], then call [`ServoState::spin`] whenever a
-/// wake signal arrives (i.e. from `Message::ServoWake` in `App::update`).
+/// All `ServoState` instances within a thread share a single [`servo::Servo`]
+/// engine. Create the first state with [`ServoState::new`]; subsequent tabs use
+/// the same engine automatically. Call [`ServoState::spin`] on **any** state
+/// once per wake signal — it spins the shared engine and processes events for
+/// all active WebViews.
 ///
 /// # Example
 ///
@@ -30,25 +41,26 @@ use crate::waker::IcedEventLoopWaker;
 /// let (state, rx) = ServoState::new(url, PhysicalSize::new(1024_u32, 768), 1.0);
 /// ```
 pub struct ServoState {
+    // Servo engine lives in the thread_local ENGINE; stored here only for
+    // method calls that need a &Servo (e.g. resize sends messages via the engine).
     servo: servo::Servo,
     webview: servo::WebView,
     rendering_ctx: ActiveRenderingContext,
     shared: Rc<SharedState>,
-    waker_rx: async_channel::Receiver<()>,
     dialog_handler: DialogHandler,
 }
 
 impl ServoState {
-    /// Creates a Servo instance loaded with `initial_url`.
+    /// Creates a tab loaded with `initial_url`.
+    ///
+    /// On the first call, this initialises the shared Servo engine. Subsequent
+    /// calls reuse the same engine — no panic on repeated construction.
     ///
     /// `scale_factor` is the HiDPI scale of the display (e.g. `1.0`, `1.5`, `2.0`).
-    /// Pass the value from `Settings::scale_factor` or `COSMIC_SCALE`. Servo uses
-    /// this to derive the CSS viewport size from physical pixels; a wrong value
-    /// makes web content appear too small or too large.
     ///
-    /// Returns the state and a channel receiver. Pass the receiver to an iced
-    /// `Subscription` that emits `Message::ServoWake`, then call
-    /// [`ServoState::spin`] in `App::update` on each wake.
+    /// Returns the state and a channel receiver. Pass the receiver to a single
+    /// iced `Subscription` shared across all tabs. Calling [`ServoState::spin`]
+    /// on any state processes events for all WebViews.
     pub fn new(
         initial_url: Url,
         size: PhysicalSize<u32>,
@@ -58,32 +70,40 @@ impl ServoState {
         Self::new_with_context(initial_url, rendering_ctx, scale_factor)
     }
 
-    /// Creates a Servo instance with a pre-built rendering context.
+    /// Creates a tab with a pre-built rendering context.
     ///
-    /// Use this in tests to inject a `SoftwareRenderingContext` directly,
-    /// avoiding GPU WebRender paths that may not be available in CI.
+    /// Use this in tests to inject a `SoftwareRenderingContext` directly.
     pub(crate) fn new_with_context(
         initial_url: Url,
         rendering_ctx: ActiveRenderingContext,
         scale_factor: f32,
     ) -> (Self, async_channel::Receiver<()>) {
-        // Ignore error if a provider is already installed (e.g. in tests).
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-        let (waker, rx) = IcedEventLoopWaker::new();
+        // Get the shared engine, initialising it on the first call.
+        let (servo, waker, rx) = ENGINE.with(|cell| {
+            let mut borrow = cell.borrow_mut();
+            if let Some((servo, waker, rx)) = borrow.as_ref() {
+                (servo.clone(), waker.clone(), rx.clone())
+            } else {
+                let (waker, rx) = IcedEventLoopWaker::new();
+                let servo = ServoBuilder::default()
+                    .event_loop_waker(Box::new(waker.clone()))
+                    .build();
+                servo.setup_logging();
+                servo.set_delegate(Rc::new(CosmicServoDelegate));
+                *borrow = Some((servo.clone(), waker.clone(), rx.clone()));
+                (servo, waker, rx)
+            }
+        });
 
         let shared = SharedState::new();
         let delegate = Rc::new(CosmicWebViewDelegate::new(
             rendering_ctx.as_rc(),
             shared.clone(),
+            // All tabs share the same waker sender — one wake covers all WebViews.
             waker.sender(),
         ));
-
-        let servo = ServoBuilder::default()
-            .event_loop_waker(Box::new(waker))
-            .build();
-        servo.setup_logging();
-        servo.set_delegate(Rc::new(CosmicServoDelegate));
 
         let webview = WebViewBuilder::new(&servo, rendering_ctx.as_rc())
             .url(initial_url)
@@ -96,13 +116,15 @@ impl ServoState {
             webview,
             rendering_ctx,
             shared,
-            waker_rx: rx.clone(),
             dialog_handler: DialogHandler::new(),
         };
         (state, rx)
     }
 
-    /// Spins the Servo event loop once, processing any pending events.
+    /// Spins the shared Servo engine once, processing pending events for all WebViews.
+    ///
+    /// Call this on any `ServoState` — it does not matter which tab, since they
+    /// all share the same underlying engine.
     pub fn spin(&self) {
         self.servo.spin_event_loop();
     }
@@ -153,42 +175,29 @@ impl ServoState {
 
     /// Returns a monotonically increasing counter that increments each time
     /// a new rendered frame is available.
-    ///
-    /// Use this to avoid re-creating an `image::Handle` on every wake signal:
-    /// only rebuild the handle when this value changes.
     pub fn frame_generation(&self) -> u64 {
         self.shared.frame_generation.get()
     }
 
-    /// Returns a clone of the wake receiver for use in an iced `Subscription`.
+    /// Returns a clone of the shared wake receiver for use in an iced `Subscription`.
+    ///
+    /// All `ServoState` instances return the same underlying channel. Create one
+    /// iced subscription for the whole application, not one per tab.
     pub fn waker_rx(&self) -> async_channel::Receiver<()> {
-        self.waker_rx.clone()
+        ENGINE.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .map(|(_, _, rx)| rx.clone())
+                .expect("ENGINE is initialised before waker_rx is called")
+        })
     }
 
     /// Takes the pending dialog or file-picker control, if any.
-    ///
-    /// Call this after [`Self::spin`] to check whether Servo has requested a
-    /// dialog. Present the dialog using libcosmic widgets, then call
-    /// [`servo::SimpleDialog::confirm`] / [`servo::SimpleDialog::dismiss`] or
-    /// [`servo::FilePicker::submit`] / [`servo::FilePicker::dismiss`] when
-    /// the user responds. Dropping the control sends the default reply.
     pub fn take_dialog(&self) -> Option<EmbedderControl> {
         self.shared.pending_dialog.borrow_mut().take()
     }
 
-    /// Route the pending dialog control (if any) to the built-in dialog handler.
-    ///
-    /// Call this after [`Self::spin`]. If the control is a `FilePicker`, the
-    /// handler returns `Some(task)` — return it from your `update()`:
-    ///
-    /// ```ignore
-    /// if let Some(task) = self.servo.handle_dialog_control(control) {
-    ///     return task.map(|msg| libcosmic::action::app(Message::Dialog(msg)));
-    /// }
-    /// ```
-    ///
-    /// For `ContextMenu`, call [`Self::take_dialog`] directly — the built-in
-    /// handler does not manage context menus (they require custom UI placement).
+    /// Route the pending dialog control to the built-in dialog handler.
     pub fn handle_dialog_control(
         &mut self,
         control: EmbedderControl,
@@ -196,46 +205,27 @@ impl ServoState {
         self.dialog_handler.accept(control)
     }
 
-    /// Forward a [`DialogMsg`] produced by the built-in dialog widgets to the
-    /// handler. Call this from your `update()`:
-    ///
-    /// ```ignore
-    /// Message::Dialog(msg) => self.servo.update_dialog(msg),
-    /// ```
+    /// Forward a [`DialogMsg`] produced by the built-in dialog widgets to the handler.
     pub fn update_dialog(&mut self, msg: DialogMsg) {
         self.dialog_handler.update(msg);
     }
 
     /// Build the current pending dialog element for `Application::dialog()`.
-    ///
-    /// ```ignore
-    /// fn dialog(&self) -> Option<Element<'_, Message>> {
-    ///     self.servo.dialog_view().map(|e| e.map(Message::Dialog))
-    /// }
-    /// ```
     pub fn dialog_view(&self) -> Option<libcosmic::Element<'_, DialogMsg>> {
         self.dialog_handler.view()
     }
 
     /// Takes the pending HTTP authentication request, if any.
-    ///
-    /// Show a username/password dialog, then call
-    /// [`servo::AuthenticationRequest::authenticate`] with the credentials, or
-    /// drop the request to cancel authentication.
     pub fn take_auth_request(&self) -> Option<AuthenticationRequest> {
         self.shared.pending_auth.borrow_mut().take()
     }
 
     /// Returns the current cursor shape as last reported by the page.
-    ///
-    /// The app should update the window cursor whenever this changes.
     pub fn cursor(&self) -> Cursor {
         self.shared.cursor.get()
     }
 
     /// Returns `true` when the page has requested fullscreen mode.
-    ///
-    /// The app should transition the window to or from fullscreen accordingly.
     pub fn is_fullscreen(&self) -> bool {
         self.shared.is_fullscreen.get()
     }
@@ -261,9 +251,6 @@ impl ServoState {
     }
 
     /// Takes the crash info if a pipeline has panicked since the last call.
-    ///
-    /// Returns `Some((reason, backtrace))`. The app should show a reload
-    /// prompt or an error page.
     pub fn take_crash(&self) -> Option<(String, Option<String>)> {
         self.shared.crashed.borrow_mut().take()
     }
