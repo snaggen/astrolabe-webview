@@ -167,6 +167,20 @@ impl ServoState {
         self.webview.reload();
     }
 
+    /// Sets the page zoom factor (e.g. `1.0` = 100 %, `1.5` = 150 %).
+    ///
+    /// This adjusts the page's `devicePixelRatio` and reflows layout, unlike
+    /// pinch zoom which only magnifies the viewport. Servo clamps the value to
+    /// the inclusive range `[0.1, 10.0]`.
+    pub fn set_page_zoom(&self, zoom: f32) {
+        self.webview.set_page_zoom(zoom);
+    }
+
+    /// Returns the current page zoom factor (`1.0` = 100 %).
+    pub fn page_zoom(&self) -> f32 {
+        self.webview.page_zoom()
+    }
+
     pub fn send_input(&self, event: InputEvent) {
         self.webview.notify_input_event(event);
     }
