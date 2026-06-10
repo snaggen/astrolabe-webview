@@ -47,6 +47,9 @@ pub(crate) struct SharedState {
     pub pending_auth: RefCell<Option<AuthenticationRequest>>,
     /// Most recent cursor shape reported by the page.
     pub cursor: Cell<Cursor>,
+    /// URL of the hyperlink currently under the cursor, or `None`. Reported by
+    /// the page on hover; used to open links in a new tab via middle-click.
+    pub status_text: RefCell<Option<String>>,
     /// Whether the page is currently in fullscreen mode.
     pub is_fullscreen: Cell<bool>,
     /// Crash info set when a pipeline panics: `(reason, backtrace)`.
@@ -71,6 +74,7 @@ impl SharedState {
             pending_dialog: RefCell::new(None),
             pending_auth: RefCell::new(None),
             cursor: Cell::new(Cursor::Default),
+            status_text: RefCell::new(None),
             is_fullscreen: Cell::new(false),
             crashed: RefCell::new(None),
             current_url: RefCell::new(None),
@@ -277,6 +281,11 @@ impl WebViewDelegate for CosmicWebViewDelegate {
 
     fn notify_cursor_changed(&self, _webview: WebView, cursor: Cursor) {
         self.shared.cursor.set(cursor);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_status_text_changed(&self, _webview: WebView, status: Option<String>) {
+        *self.shared.status_text.borrow_mut() = status;
         let _ = self.waker_tx.try_send(());
     }
 

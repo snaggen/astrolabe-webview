@@ -7,7 +7,9 @@ use libcosmic::iced::advanced::widget::{Tree, tree};
 use libcosmic::iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer,
 };
-use libcosmic::iced::{Background, Border, Color, Event, Length, Rectangle, Shadow, Size, window};
+use libcosmic::iced::{
+    Background, Border, Color, Event, Length, Rectangle, Shadow, Size, keyboard, window,
+};
 use libcosmic::widget::menu;
 use servo::{Cursor, InputEvent, WebViewPoint};
 
@@ -22,6 +24,12 @@ use crate::primitive::{WebViewFrame, WebViewPrimitive};
 struct WebViewState {
     last_phys_size: (u32, u32),
     kinetic: KineticScroll,
+    /// Whether Ctrl is currently held, tracked from keyboard events so the
+    /// widget can recognise the Ctrl+click "open in new tab" gesture.
+    ctrl_held: bool,
+    /// Button whose release must be dropped because its press opened a link in
+    /// a new tab (so the click never reaches Servo as a navigation/autoscroll).
+    swallow_release: Option<mouse::Button>,
 }
 
 /// Kinetic (momentum) scroll state for mouse-wheel and touchpad coast.
@@ -223,12 +231,18 @@ pub struct WebViewWidget<'a, Message> {
     /// itself in libcosmic's `context_menu` (and re-applies the page cursor,
     /// which that wrapper would otherwise swallow) on conversion to `Element`.
     context_menu: Option<Vec<menu::Tree<Message>>>,
+    /// URL of the hyperlink under the cursor, from [`ServoState::hovered_link`].
+    /// Required for the middle-click / Ctrl+click "open in new tab" gesture.
+    hovered_link: Option<String>,
     /// Fired with `(physical_width, physical_height)` when the widget's layout
     /// size changes. Use this to call [`ServoState::resize`] with exact bounds
     /// rather than the full window size.
     on_resize: Option<Box<dyn Fn(u32, u32) -> Message + 'a>>,
     /// Callback that wraps a [`InputEvent`] into the app's `Message` type.
     on_input: Option<Box<dyn Fn(InputEvent) -> Message + 'a>>,
+    /// Fired with a link URL when the user middle-clicks or Ctrl+clicks a link,
+    /// for the embedder to open it in a new tab.
+    on_open_link: Option<Box<dyn Fn(String) -> Message + 'a>>,
     _phantom: PhantomData<Message>,
 }
 
@@ -245,8 +259,10 @@ impl<'a, Message> WebViewWidget<'a, Message> {
             keyboard_enabled: true,
             cursor: Cursor::Default,
             context_menu: None,
+            hovered_link: None,
             on_resize: None,
             on_input: None,
+            on_open_link: None,
             _phantom: PhantomData,
         }
     }
@@ -301,6 +317,16 @@ impl<'a, Message> WebViewWidget<'a, Message> {
         self
     }
 
+    /// Sets the URL of the hyperlink currently under the cursor, from
+    /// [`ServoState::hovered_link`].
+    ///
+    /// Required for the middle-click / Ctrl+click "open in new tab" gesture
+    /// registered with [`on_open_link`](Self::on_open_link).
+    pub fn hovered_link(mut self, url: Option<String>) -> Self {
+        self.hovered_link = url;
+        self
+    }
+
     /// Registers a callback that fires with the widget's physical pixel size
     /// whenever the layout changes.
     ///
@@ -320,6 +346,17 @@ impl<'a, Message> WebViewWidget<'a, Message> {
     /// [`ServoState::send_input`].
     pub fn on_input(mut self, f: impl Fn(InputEvent) -> Message + 'a) -> Self {
         self.on_input = Some(Box::new(f));
+        self
+    }
+
+    /// Registers a callback fired with a link URL when the user middle-clicks or
+    /// Ctrl+clicks a hyperlink, so the embedder can open it in a new tab.
+    ///
+    /// Requires the hovered link to be supplied via
+    /// [`hovered_link`](Self::hovered_link). The triggering click is not
+    /// forwarded to Servo, so the current page does not also navigate.
+    pub fn on_open_link(mut self, f: impl Fn(String) -> Message + 'a) -> Self {
+        self.on_open_link = Some(Box::new(f));
         self
     }
 }
@@ -410,6 +447,20 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
         let scale = self.scale;
         let wstate = state.state.downcast_mut::<WebViewState>();
 
+        // Track Ctrl so the Ctrl+click "open in new tab" gesture is recognised.
+        match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
+                wstate.ctrl_held = m.control();
+            }
+            Event::Keyboard(
+                keyboard::Event::KeyPressed { modifiers, .. }
+                | keyboard::Event::KeyReleased { modifiers, .. },
+            ) => {
+                wstate.ctrl_held = modifiers.control();
+            }
+            _ => {}
+        }
+
         // Notify the embedder when the widget's physical size changes so
         // Servo renders at the exact widget resolution, not the full window size.
         if let Some(on_resize) = &self.on_resize {
@@ -460,6 +511,28 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
             };
             wstate.kinetic.on_wheel(dx, dy, pos, Instant::now());
             shell.request_redraw();
+        }
+
+        // Middle-click or Ctrl+left-click on a link opens it in a new tab. The
+        // press is consumed (and its release dropped) so Servo does not also
+        // navigate the current page or start middle-button autoscroll.
+        if let Event::Mouse(mouse::Event::ButtonPressed(button)) = event
+            && let Some(on_open_link) = &self.on_open_link
+            && cursor.is_over(bounds)
+        {
+            let new_tab_gesture = matches!(button, mouse::Button::Middle)
+                || (matches!(button, mouse::Button::Left) && wstate.ctrl_held);
+            if new_tab_gesture && let Some(url) = &self.hovered_link {
+                shell.publish(on_open_link(url.clone()));
+                wstate.swallow_release = Some(*button);
+                return;
+            }
+        }
+        if let Event::Mouse(mouse::Event::ButtonReleased(button)) = event
+            && wstate.swallow_release == Some(*button)
+        {
+            wstate.swallow_release = None;
+            return;
         }
 
         // Forward the event to Servo unchanged.

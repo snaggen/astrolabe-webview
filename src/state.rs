@@ -278,6 +278,14 @@ impl ServoState {
         self.shared.cursor.get()
     }
 
+    /// Returns the URL of the hyperlink currently under the cursor, if any.
+    ///
+    /// The page reports this on hover; embedders use it to open a link in a new
+    /// tab on middle-click or Ctrl+click.
+    pub fn hovered_link(&self) -> Option<String> {
+        self.shared.status_text.borrow().clone()
+    }
+
     /// Returns `true` when the page has requested fullscreen mode.
     pub fn is_fullscreen(&self) -> bool {
         self.shared.is_fullscreen.get()
