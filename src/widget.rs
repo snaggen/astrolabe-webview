@@ -7,7 +7,8 @@ use libcosmic::iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer,
 };
 use libcosmic::iced::{Background, Border, Color, Event, Length, Rectangle, Shadow, Size, window};
-use servo::{InputEvent, WebViewPoint};
+use libcosmic::widget::menu;
+use servo::{Cursor, InputEvent, WebViewPoint};
 
 use crate::input;
 use crate::primitive::{WebViewFrame, WebViewPrimitive};
@@ -177,6 +178,12 @@ pub struct WebViewWidget<'a, Message> {
     scale: f32,
     /// When `false`, keyboard events are not forwarded to Servo.
     keyboard_enabled: bool,
+    /// Current cursor shape as reported by the page via [`ServoState::cursor`].
+    cursor: Cursor,
+    /// Context menu items shown on right-click. When set, the widget wraps
+    /// itself in libcosmic's `context_menu` (and re-applies the page cursor,
+    /// which that wrapper would otherwise swallow) on conversion to `Element`.
+    context_menu: Option<Vec<menu::Tree<Message>>>,
     /// Fired with `(physical_width, physical_height)` when the widget's layout
     /// size changes. Use this to call [`ServoState::resize`] with exact bounds
     /// rather than the full window size.
@@ -197,6 +204,8 @@ impl<'a, Message> WebViewWidget<'a, Message> {
             height: Length::Fill,
             scale: 1.0,
             keyboard_enabled: true,
+            cursor: Cursor::Default,
+            context_menu: None,
             on_resize: None,
             on_input: None,
             _phantom: PhantomData,
@@ -229,6 +238,27 @@ impl<'a, Message> WebViewWidget<'a, Message> {
     /// `true`.
     pub fn keyboard_enabled(mut self, enabled: bool) -> Self {
         self.keyboard_enabled = enabled;
+        self
+    }
+
+    /// Sets the current cursor shape as reported by [`ServoState::cursor`].
+    ///
+    /// Call this each frame so that the widget returns the correct
+    /// [`mouse::Interaction`] when the page requests a non-default cursor
+    /// (e.g. a pointer over a link). Defaults to [`Cursor::Default`].
+    pub fn cursor(mut self, cursor: Cursor) -> Self {
+        self.cursor = cursor;
+        self
+    }
+
+    /// Sets the context menu items shown when the user right-clicks the page.
+    ///
+    /// The widget wraps itself in libcosmic's `context_menu` when converted to
+    /// an [`Element`](libcosmic::Element), and re-applies the page cursor that
+    /// the wrapper would otherwise discard — no extra plumbing needed in the
+    /// embedding application.
+    pub fn context_menu(mut self, items: Vec<menu::Tree<Message>>) -> Self {
+        self.context_menu = Some(items);
         self
     }
 
@@ -277,6 +307,21 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
         limits: &layout::Limits,
     ) -> layout::Node {
         layout::Node::new(limits.resolve(self.width, self.height, Size::ZERO))
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &libcosmic::Renderer,
+    ) -> mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            cursor_interaction(self.cursor)
+        } else {
+            mouse::Interaction::None
+        }
     }
 
     fn draw(
@@ -394,9 +439,78 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
     }
 }
 
-impl<'a, Message: 'a> From<WebViewWidget<'a, Message>> for libcosmic::Element<'a, Message> {
-    fn from(widget: WebViewWidget<'a, Message>) -> Self {
-        libcosmic::iced::core::Element::new(widget)
+/// Maps a Servo [`Cursor`] to the closest iced [`mouse::Interaction`].
+///
+/// [`WebViewWidget`] applies this automatically — both via
+/// `Widget::mouse_interaction` and around its built-in context-menu wrapper.
+/// Use this function only when wrapping the webview in an additional container
+/// that does not forward `mouse_interaction` from its child; re-apply the
+/// cursor outside it with a `mouse_area`:
+///
+/// ```ignore
+/// widget::mouse_area(some_wrapper(webview))
+///     .interaction(cosmic_webview::cursor_interaction(servo.cursor()))
+/// ```
+///
+/// Diagonal resize cursors are approximated: NE/SW → `ResizingDiagonallyUp`,
+/// NW/SE → `ResizingDiagonallyDown`. Vertical-text falls back to `Text`.
+pub fn cursor_interaction(cursor: Cursor) -> mouse::Interaction {
+    match cursor {
+        Cursor::None => mouse::Interaction::Hidden,
+        Cursor::Default => mouse::Interaction::None,
+        Cursor::Pointer => mouse::Interaction::Pointer,
+        Cursor::ContextMenu => mouse::Interaction::ContextMenu,
+        Cursor::Help => mouse::Interaction::Help,
+        Cursor::Progress => mouse::Interaction::Progress,
+        Cursor::Wait => mouse::Interaction::Wait,
+        Cursor::Cell => mouse::Interaction::Cell,
+        Cursor::Crosshair => mouse::Interaction::Crosshair,
+        Cursor::Text | Cursor::VerticalText => mouse::Interaction::Text,
+        Cursor::Alias => mouse::Interaction::Alias,
+        Cursor::Copy => mouse::Interaction::Copy,
+        Cursor::Move => mouse::Interaction::Move,
+        Cursor::NoDrop => mouse::Interaction::NoDrop,
+        Cursor::NotAllowed => mouse::Interaction::NotAllowed,
+        Cursor::Grab => mouse::Interaction::Grab,
+        Cursor::Grabbing => mouse::Interaction::Grabbing,
+        Cursor::EResize | Cursor::WResize | Cursor::EwResize => {
+            mouse::Interaction::ResizingHorizontally
+        }
+        Cursor::NResize | Cursor::SResize | Cursor::NsResize => {
+            mouse::Interaction::ResizingVertically
+        }
+        Cursor::NeResize | Cursor::SwResize | Cursor::NeswResize => {
+            mouse::Interaction::ResizingDiagonallyUp
+        }
+        Cursor::NwResize | Cursor::SeResize | Cursor::NwseResize => {
+            mouse::Interaction::ResizingDiagonallyDown
+        }
+        Cursor::ColResize => mouse::Interaction::ResizingColumn,
+        Cursor::RowResize => mouse::Interaction::ResizingRow,
+        Cursor::AllScroll => mouse::Interaction::AllScroll,
+        Cursor::ZoomIn => mouse::Interaction::ZoomIn,
+        Cursor::ZoomOut => mouse::Interaction::ZoomOut,
+    }
+}
+
+impl<'a, Message: Clone + 'static> From<WebViewWidget<'a, Message>>
+    for libcosmic::Element<'a, Message>
+{
+    fn from(mut widget: WebViewWidget<'a, Message>) -> Self {
+        let cursor = widget.cursor;
+        let Some(items) = widget.context_menu.take() else {
+            return libcosmic::iced::core::Element::new(widget);
+        };
+
+        // ContextMenu does not forward mouse_interaction from its child, so the
+        // page cursor the inner widget reports would be lost. Re-apply it with
+        // a mouse_area outside the wrapper.
+        libcosmic::widget::mouse_area(libcosmic::widget::context_menu(
+            libcosmic::iced::core::Element::new(widget),
+            Some(items),
+        ))
+        .interaction(cursor_interaction(cursor))
+        .into()
     }
 }
 

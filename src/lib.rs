@@ -31,7 +31,7 @@ pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::ServoState;
 pub use waker::IcedEventLoopWaker;
-pub use widget::WebViewWidget;
+pub use widget::{WebViewWidget, cursor_interaction};
 
 // Re-export servo types that embedding applications need directly.
 // This removes the need for embedders to add servo as a direct dependency.
