@@ -16,6 +16,8 @@
 mod delegate;
 pub mod dialog_handler;
 pub mod dialogs;
+#[cfg(all(target_os = "linux", feature = "dmabuf"))]
+pub(crate) mod gpu_share;
 pub(crate) mod input;
 pub mod primitive;
 mod rendering;

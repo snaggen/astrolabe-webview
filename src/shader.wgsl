@@ -10,8 +10,8 @@ struct VertexOutput {
 @group(0) @binding(0) var tex: texture_2d<f32>;
 @group(0) @binding(1) var s: sampler;
 
-@vertex
-fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
+// Shared fullscreen-triangle setup; `flip_v` selects pixel row order.
+fn fullscreen_vertex(in_vertex_index: u32, flip_v: bool) -> VertexOutput {
     var out: VertexOutput;
     // Three-vertex triangle that covers the entire clip space.
     // set_viewport in the render pass clips it to the widget bounds.
@@ -22,7 +22,22 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
         1.0,
         1.0,
     );
+    if flip_v {
+        out.uv.y = 1.0 - out.uv.y;
+    }
     return out;
+}
+
+// Top-down pixel data (normal image row order).
+@vertex
+fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
+    return fullscreen_vertex(in_vertex_index, false);
+}
+
+// Bottom-up pixel data (OpenGL readback order) — flips V so the CPU never has to.
+@vertex
+fn vs_main_flip(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
+    return fullscreen_vertex(in_vertex_index, true);
 }
 
 @fragment

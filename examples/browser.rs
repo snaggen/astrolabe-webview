@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use cosmic_webview::{DialogMsg, ServoState, WebViewFrame, WebViewWidget};
+use cosmic_webview::{DialogMsg, ServoState, WebViewWidget};
 use dpi::PhysicalSize;
 use libcosmic::app::{Core, Settings, Task};
 use libcosmic::executor;
@@ -138,8 +138,6 @@ pub enum Message {
 pub struct Browser {
     core: Core,
     servo: ServoState,
-    /// Persistent GPU texture — updated in-place each frame.
-    frame: WebViewFrame,
     /// Text currently shown in the URL bar.
     url_bar: String,
     /// Whether the URL bar currently holds iced keyboard focus.
@@ -209,7 +207,6 @@ impl libcosmic::Application for Browser {
         let app = Browser {
             core,
             servo,
-            frame: WebViewFrame::new(),
             url_bar: initial_url.to_string(),
             url_bar_focused: false,
             scale: 1.0,
@@ -266,10 +263,8 @@ impl libcosmic::Application for Browser {
                 let title = self.servo.title().unwrap_or_default();
                 self.set_header_title(title);
 
-                if let Some(img) = self.servo.current_frame().as_ref() {
-                    let (w, h) = img.dimensions();
-                    self.frame.update(w, h, img.as_raw());
-                }
+                // No frame copying needed: the engine fills the shared frame
+                // buffer directly; the widget picks it up on the next draw.
 
                 if let Some((reason, _bt)) = self.servo.take_crash() {
                     tracing::error!("WebView crashed: {reason}");
@@ -362,7 +357,7 @@ impl libcosmic::Application for Browser {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let webview = WebViewWidget::new(&self.frame)
+        let webview = WebViewWidget::new(self.servo.frame())
             .scale(self.scale)
             .on_input(Message::Input)
             .on_resize(Message::WebViewResized)

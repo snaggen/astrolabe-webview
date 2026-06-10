@@ -37,12 +37,25 @@ tracing = "0.1"
 # TLS provider — must be initialised once before Servo starts networking.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
+# Zero-copy GPU frame sharing (dmabuf): Vulkan memory export via ash (same
+# version as wgpu-hal uses internally) and EGL dmabuf import via khronos-egl.
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = { version = "0.38", optional = true }
+khronos-egl = { version = "6", features = ["dynamic"], optional = true }
+
 [[example]]
 name = "browser"
 # The browser example needs the winit+wgpu feature set from libcosmic.
 required-features = ["browser-example"]
 
 [features]
+default = ["dmabuf"]
+
+# Zero-copy GPU frame path on Linux: Servo's GL output is blitted into a
+# dmabuf-shared texture sampled directly by wgpu — no CPU readback. Falls
+# back to CPU readback at runtime whenever any step is unsupported.
+dmabuf = ["dep:ash", "dep:khronos-egl"]
+
 # Enable the XDG desktop portal file chooser (Wayland-native, requires D-Bus).
 # Without this feature FilePicker controls are auto-dismissed.
 xdg-portal = ["libcosmic/xdg-portal"]

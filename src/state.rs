@@ -1,17 +1,18 @@
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::{
-    AuthenticationRequest, Cursor, DeviceIndependentPixel, DevicePixel, EmbedderControl,
-    InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder,
+    AuthenticationRequest, Cursor, DeviceIndependentPixel, DeviceIntRect, DevicePixel,
+    EmbedderControl, InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder,
 };
 use url::Url;
 
 use crate::delegate::{CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
 use crate::dialog_handler::{DialogHandler, DialogMsg};
-use crate::rendering::ActiveRenderingContext;
+use crate::primitive::WebViewFrame;
+use crate::rendering::{ActiveRenderingContext, read_frame_into_sink};
 use crate::waker::IcedEventLoopWaker;
 
 // The Servo engine is a process-wide singleton on the main thread.
@@ -46,6 +47,9 @@ pub struct ServoState {
     servo: servo::Servo,
     webview: servo::WebView,
     rendering_ctx: ActiveRenderingContext,
+    /// Shared pixel buffer filled directly by the engine delegate; pass
+    /// [`ServoState::frame`] to [`crate::WebViewWidget::new`].
+    frame: WebViewFrame,
     shared: Rc<SharedState>,
     dialog_handler: DialogHandler,
 }
@@ -98,9 +102,12 @@ impl ServoState {
         });
 
         let shared = SharedState::new();
+        let frame = WebViewFrame::new();
         let delegate = Rc::new(CosmicWebViewDelegate::new(
             rendering_ctx.as_rc(),
             shared.clone(),
+            // The delegate fills the frame buffer in place — no intermediate copy.
+            frame.sink(),
             // All tabs share the same waker sender — one wake covers all WebViews.
             waker.sender(),
         ));
@@ -115,6 +122,7 @@ impl ServoState {
             servo,
             webview,
             rendering_ctx,
+            frame,
             shared,
             dialog_handler: DialogHandler::new(),
         };
@@ -163,10 +171,41 @@ impl ServoState {
         self.webview.notify_input_event(event);
     }
 
-    /// Returns a reference to the most recently rendered frame, or `None` if
-    /// no frame has been received yet.
-    pub fn current_frame(&self) -> Ref<'_, Option<RgbaImage>> {
-        self.shared.current_frame.borrow()
+    /// Returns the shared frame buffer for this tab.
+    ///
+    /// Pass it to [`crate::WebViewWidget::new`] in `view()`. The engine fills
+    /// it directly when new frames arrive — the application never needs to
+    /// copy pixel data.
+    pub fn frame(&self) -> &WebViewFrame {
+        &self.frame
+    }
+
+    /// Controls whether this tab performs per-frame readback.
+    ///
+    /// Set `false` for background tabs: compositing and pixel readback are
+    /// skipped entirely while hidden. On becoming visible again, the most
+    /// recent frame is painted and read back immediately, so there is no
+    /// stale-content flash when switching tabs.
+    pub fn set_visible(&self, visible: bool) {
+        self.shared.visible.set(visible);
+        if visible && self.shared.frame_pending.replace(false) {
+            self.webview.paint();
+            if read_frame_into_sink(&self.rendering_ctx.as_rc(), &self.frame.sink()) {
+                self.shared
+                    .frame_generation
+                    .set(self.shared.frame_generation.get().wrapping_add(1));
+            }
+        }
+    }
+
+    /// Captures the most recently rendered frame as a top-down image.
+    ///
+    /// This is an on-demand GPU readback intended for occasional use
+    /// (screenshots, tab thumbnails) — it is **not** part of the per-frame
+    /// render path and allocates a fresh image each call.
+    pub fn screenshot(&self) -> Option<RgbaImage> {
+        let rect = DeviceIntRect::from_size(self.webview.size().to_i32());
+        self.rendering_ctx.as_rc().read_to_image(rect)
     }
 
     pub fn load_status(&self) -> LoadStatus {

@@ -3,20 +3,41 @@ use std::rc::Rc;
 
 use async_channel::Sender;
 use servo::{
-    AuthenticationRequest, ConsoleLogLevel, Cursor, DeviceIntRect, EmbedderControl,
-    EmbedderControlId, LoadStatus, RenderingContext, RgbaImage, ServoDelegate, ServoError, WebView,
-    WebViewDelegate,
+    AuthenticationRequest, ConsoleLogLevel, Cursor, EmbedderControl, EmbedderControlId, LoadStatus,
+    RenderingContext, ServoDelegate, ServoError, WebView, WebViewDelegate,
 };
 use url::Url;
 
+#[cfg(all(target_os = "linux", feature = "dmabuf"))]
+use crate::gpu_share::{GlImporter, GpuPath};
+use crate::primitive::FrameSink;
+use crate::rendering::read_frame_into_sink;
+
+/// Lazily initialised GL-side importer for the zero-copy path.
+///
+/// `Ready` is boxed: the importer is much larger than the unit variants and
+/// this enum lives in every delegate.
+#[cfg(all(target_os = "linux", feature = "dmabuf"))]
+#[derive(Default)]
+pub(crate) enum GlShareState {
+    #[default]
+    Untried,
+    Ready(Box<GlImporter>),
+    Unavailable,
+}
+
 /// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
-    pub current_frame: RefCell<Option<RgbaImage>>,
     pub load_status: Cell<LoadStatus>,
-    /// Incremented each time [`notify_new_frame_ready`] produces a new frame.
-    /// Callers can compare against a stored value to detect actual frame changes
-    /// without cloning pixel data on every wake signal.
+    /// Incremented each time a new frame is committed to the frame sink.
+    /// Callers can compare against a stored value to detect actual frame changes.
     pub frame_generation: Cell<u64>,
+    /// `false` while the tab is hidden (e.g. a background tab): readback is
+    /// skipped entirely and `frame_pending` records that content changed.
+    pub visible: Cell<bool>,
+    /// Set when a frame became ready while the tab was hidden, so the next
+    /// `set_visible(true)` can paint and read it back immediately.
+    pub frame_pending: Cell<bool>,
     /// Pending dialog or picker waiting for the app to respond.
     ///
     /// Only one control can be pending at a time; a new arrival replaces the
@@ -43,9 +64,10 @@ pub(crate) struct SharedState {
 impl SharedState {
     pub(crate) fn new() -> Rc<Self> {
         Rc::new(Self {
-            current_frame: RefCell::new(None),
             load_status: Cell::new(LoadStatus::Started),
             frame_generation: Cell::new(0),
+            visible: Cell::new(true),
+            frame_pending: Cell::new(false),
             pending_dialog: RefCell::new(None),
             pending_auth: RefCell::new(None),
             cursor: Cell::new(Cursor::Default),
@@ -70,32 +92,163 @@ impl SharedState {
 pub(crate) struct CosmicWebViewDelegate {
     rendering_ctx: Rc<dyn RenderingContext>,
     shared: Rc<SharedState>,
+    frame_sink: FrameSink,
     waker_tx: Sender<()>,
+    #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+    gl_share: RefCell<GlShareState>,
 }
 
 impl CosmicWebViewDelegate {
     pub(crate) fn new(
         rendering_ctx: Rc<dyn RenderingContext>,
         shared: Rc<SharedState>,
+        frame_sink: FrameSink,
         waker_tx: Sender<()>,
     ) -> Self {
         Self {
             rendering_ctx,
             shared,
+            frame_sink,
             waker_tx,
+            #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+            gl_share: RefCell::new(GlShareState::Untried),
+        }
+    }
+
+    /// Produces the next displayable frame, preferring the zero-copy path.
+    ///
+    /// Returns `true` when a new frame was committed (either into a shared
+    /// GPU buffer or the CPU pixel buffer).
+    fn produce_frame(&self) -> bool {
+        #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+        if self.try_gpu_frame() {
+            return true;
+        }
+        read_frame_into_sink(&self.rendering_ctx, &self.frame_sink)
+    }
+
+    /// Drives the GL side of the zero-copy state machine.
+    ///
+    /// Returns `true` when a frame was committed to a shared GPU buffer;
+    /// `false` means the caller should fall back to CPU readback (which is
+    /// also the permanent outcome after `set_gpu_failed`).
+    #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+    fn try_gpu_frame(&self) -> bool {
+        let size = self.rendering_ctx.size();
+        let (width, height) = (size.width, size.height);
+
+        match self.frame_sink.gpu_path() {
+            GpuPath::Active { offer, index } => {
+                if offer.width != width || offer.height != height {
+                    // Resized: shared buffers no longer match. Back to CPU
+                    // readback; the wgpu side re-offers at the new size.
+                    self.release_importer();
+                    self.frame_sink.set_gpu_inactive();
+                    return false;
+                }
+                let next = (index + 1) % crate::gpu_share::BUFFER_COUNT;
+                if self.blit_shared(next) {
+                    self.frame_sink.set_gpu_active(next);
+                    true
+                } else {
+                    self.release_importer();
+                    self.frame_sink.set_gpu_failed();
+                    false
+                }
+            }
+            GpuPath::Offered(offer) => {
+                if offer.width != width || offer.height != height {
+                    // Stale offer from before a resize; request a fresh one.
+                    self.frame_sink.set_gpu_inactive();
+                    return false;
+                }
+                if !self.import_offer(&offer) {
+                    self.frame_sink.set_gpu_failed();
+                    return false;
+                }
+                if self.blit_shared(0) {
+                    self.frame_sink.set_gpu_active(0);
+                    true
+                } else {
+                    self.release_importer();
+                    self.frame_sink.set_gpu_failed();
+                    false
+                }
+            }
+            GpuPath::Inactive | GpuPath::Failed => false,
+        }
+    }
+
+    /// Imports the offer's buffers, initialising the EGL importer on first use.
+    /// Requires (and ensures) Servo's GL context is current.
+    #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+    fn import_offer(&self, offer: &crate::gpu_share::GpuOffer) -> bool {
+        if self.rendering_ctx.make_current().is_err() {
+            return false;
+        }
+        let mut state = self.gl_share.borrow_mut();
+        if matches!(*state, GlShareState::Untried) {
+            *state = match GlImporter::try_new() {
+                Some(importer) => GlShareState::Ready(Box::new(importer)),
+                None => GlShareState::Unavailable,
+            };
+        }
+        let GlShareState::Ready(importer) = &mut *state else {
+            return false;
+        };
+        if importer.imported_epoch() == Some(offer.epoch) {
+            return true;
+        }
+        let gl = self.rendering_ctx.gleam_gl_api();
+        importer.import(&gl, offer)
+    }
+
+    /// Blits Servo's rendered surface into shared buffer `index`.
+    #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+    fn blit_shared(&self, index: usize) -> bool {
+        if self.rendering_ctx.make_current().is_err() {
+            return false;
+        }
+        let state = self.gl_share.borrow();
+        let GlShareState::Ready(importer) = &*state else {
+            return false;
+        };
+        // Bind Servo's surface FBO, then recover its id generically — works
+        // for any RenderingContext implementation without exposing internals.
+        self.rendering_ctx.prepare_for_rendering();
+        let gl = self.rendering_ctx.gleam_gl_api();
+        let mut binding = [0i32; 1];
+        // SAFETY: gleam's get_integer_v writes one value for FRAMEBUFFER_BINDING.
+        unsafe { gl.get_integer_v(gleam::gl::FRAMEBUFFER_BINDING, &mut binding) };
+        importer.blit(&gl, binding[0] as u32, index)
+    }
+
+    /// Drops imported GL resources (best effort; needs the context current).
+    #[cfg(all(target_os = "linux", feature = "dmabuf"))]
+    fn release_importer(&self) {
+        if self.rendering_ctx.make_current().is_err() {
+            return;
+        }
+        if let GlShareState::Ready(importer) = &mut *self.gl_share.borrow_mut() {
+            let gl = self.rendering_ctx.gleam_gl_api();
+            importer.release(&gl);
         }
     }
 }
 
 impl WebViewDelegate for CosmicWebViewDelegate {
     fn notify_new_frame_ready(&self, webview: WebView) {
-        webview.paint();
-        let rect = DeviceIntRect::from_size(webview.size().to_i32());
-        if let Some(img) = self.rendering_ctx.read_to_image(rect) {
-            *self.shared.current_frame.borrow_mut() = Some(img);
-            self.shared
-                .frame_generation
-                .set(self.shared.frame_generation.get().wrapping_add(1));
+        if self.shared.visible.get() {
+            webview.paint();
+            if self.produce_frame() {
+                self.shared
+                    .frame_generation
+                    .set(self.shared.frame_generation.get().wrapping_add(1));
+            }
+        } else {
+            // Hidden tab: skip compositing and readback entirely; remember
+            // that content changed so set_visible(true) can catch up.
+            self.shared.frame_pending.set(true);
         }
         let _ = self.waker_tx.try_send(());
     }

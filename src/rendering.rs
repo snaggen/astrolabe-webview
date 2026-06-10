@@ -260,6 +260,56 @@ impl servo::RenderingContext for GpuRenderingContext {
     }
 }
 
+/// Reads the current surface pixels straight into a [`FrameSink`] buffer.
+///
+/// This is the hot per-frame readback path: `glReadPixels` writes directly
+/// into the shared upload buffer (no intermediate image, no allocation after
+/// the first frame) and rows are kept in GL's native bottom-up order — the
+/// render shader flips them for free. Use `read_to_image` only for occasional
+/// captures such as screenshots/thumbnails.
+///
+/// Returns `true` when a frame was committed to the sink.
+pub(crate) fn read_frame_into_sink(
+    ctx: &Rc<dyn servo::RenderingContext>,
+    sink: &crate::primitive::FrameSink,
+) -> bool {
+    let size = ctx.size();
+    let (width, height) = (size.width, size.height);
+    if width == 0 || height == 0 {
+        return false;
+    }
+    if let Err(err) = ctx.make_current() {
+        tracing::warn!("read_frame_into_sink: make_current failed: {err:?}");
+        return false;
+    }
+    // Binds the surface FBO so glReadPixels reads Servo's rendered output.
+    ctx.prepare_for_rendering();
+    let gl = ctx.gleam_gl_api();
+    // Unbind vertex array to work around an OSMesa sync bug (servo/servo#18606).
+    gl.bind_vertex_array(0);
+
+    let len = width as usize * height as usize * 4;
+    sink.fill_with(|pixels| {
+        pixels.resize(len, 0);
+        gl.read_pixels_into_buffer(
+            0,
+            0,
+            width as i32,
+            height as i32,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            pixels,
+        );
+        let error = gl.get_error();
+        if error != gl::NO_ERROR {
+            tracing::warn!("GL error 0x{error:x} after read_pixels_into_buffer");
+            return None;
+        }
+        // Rows are bottom-up; the shader's flipped pipeline handles orientation.
+        Some((width, height, true))
+    })
+}
+
 /// Returns the FBO id for the surface currently bound to `context`, or `None`
 /// if no surface is bound or `context_surface_info` fails.
 ///
