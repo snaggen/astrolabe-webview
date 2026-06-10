@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
+use std::time::{Duration, Instant};
 
 use iced_wgpu::primitive::Renderer as PrimitiveRenderer;
 use libcosmic::iced::advanced::widget::{Tree, tree};
 use libcosmic::iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, renderer,
 };
-use libcosmic::iced::{Background, Border, Color, Event, Length, Rectangle, Shadow, Size};
-use servo::InputEvent;
+use libcosmic::iced::{Background, Border, Color, Event, Length, Rectangle, Shadow, Size, window};
+use servo::{InputEvent, WebViewPoint};
 
 use crate::input;
 use crate::primitive::{WebViewFrame, WebViewPrimitive};
@@ -14,10 +15,133 @@ use crate::primitive::{WebViewFrame, WebViewPrimitive};
 /// Per-widget state held in the iced [`Tree`].
 ///
 /// Tracks the last physical size sent to the embedder so that `on_resize`
-/// only fires when the layout actually changes.
+/// only fires when the layout actually changes, and holds kinetic scroll state.
 #[derive(Default)]
 struct WebViewState {
     last_phys_size: (u32, u32),
+    kinetic: KineticScroll,
+}
+
+/// Kinetic (momentum) scroll state for mouse-wheel and touchpad coast.
+///
+/// Velocity is estimated as an exponentially-weighted moving average of the
+/// instantaneous scroll speed derived from incoming wheel events.  After the
+/// user stops scrolling, [`next_frame`] drives a smooth exponential deceleration
+/// until the speed falls below [`MIN_SPEED`].
+///
+/// Note: libinput does **not** implement kinetic coasting for applications —
+/// that is the responsibility of each widget. This struct handles both
+/// `Lines`-delta (mouse wheel) and `Pixels`-delta (touchpad) events.
+///
+/// [`next_frame`]: KineticScroll::next_frame
+#[derive(Default)]
+struct KineticScroll {
+    /// Running scroll velocity in logical pixels per second.
+    velocity_x: f64,
+    velocity_y: f64,
+    /// Servo cursor position where kinetic events are applied.
+    cursor_pos: Option<WebViewPoint>,
+    /// Timestamp of the most recent wheel event.
+    last_wheel: Option<Instant>,
+    /// Timestamp of the previous animation frame, used to compute `dt`.
+    last_frame: Option<Instant>,
+}
+
+impl KineticScroll {
+    /// Exponential decay rate — velocity reaches ~1 % of initial after
+    /// `ln(100) / LAMBDA ≈ 1.84` seconds.
+    const LAMBDA: f64 = 2.5;
+    /// Animation stops when speed drops below this threshold (logical px/s).
+    const MIN_SPEED: f64 = 8.0;
+    /// Delay after the last wheel event before kinetic coasting begins.
+    ///
+    /// During this window the user's direct scroll events are still arriving;
+    /// waiting avoids double-scrolling at the transition.
+    const COAST_DELAY: Duration = Duration::from_millis(50);
+    /// EWMA weight applied to the incoming instantaneous velocity sample.
+    /// Higher values track recent speed more closely but are more jittery.
+    const ALPHA: f64 = 0.4;
+    /// Cap on instantaneous speed (px/s) to prevent extreme values from
+    /// very rapid events or very short inter-event intervals.
+    const MAX_SPEED: f64 = 4000.0;
+
+    /// Records a wheel event and updates the running velocity estimate.
+    ///
+    /// `dx`/`dy` are the scroll deltas in logical pixels.
+    fn on_wheel(&mut self, dx: f64, dy: f64, pos: WebViewPoint) {
+        let now = Instant::now();
+        // Clamp dt so that the first event (no prior timestamp) and very slow
+        // deliberate clicks don't produce unrealistically large velocity samples.
+        let dt = self
+            .last_wheel
+            .map(|t| (now - t).as_secs_f64().clamp(0.008, 0.5))
+            .unwrap_or(0.1);
+
+        let vx = (dx / dt).clamp(-Self::MAX_SPEED, Self::MAX_SPEED);
+        let vy = (dy / dt).clamp(-Self::MAX_SPEED, Self::MAX_SPEED);
+        self.velocity_x = Self::ALPHA * vx + (1.0 - Self::ALPHA) * self.velocity_x;
+        self.velocity_y = Self::ALPHA * vy + (1.0 - Self::ALPHA) * self.velocity_y;
+        self.cursor_pos = Some(pos);
+        self.last_wheel = Some(now);
+    }
+
+    /// Returns `true` if the coast phase has begun (the last wheel event was
+    /// more than [`COAST_DELAY`] ago).
+    fn is_coasting(&self) -> bool {
+        self.last_wheel
+            .map(|t| t.elapsed() >= Self::COAST_DELAY)
+            .unwrap_or(false)
+    }
+
+    /// Current scroll speed in logical px/s.
+    fn speed(&self) -> f64 {
+        (self.velocity_x.powi(2) + self.velocity_y.powi(2)).sqrt()
+    }
+
+    /// Returns `true` if the animation loop should keep requesting redraws.
+    ///
+    /// Stays `true` during the pre-coast window (so the loop is alive when
+    /// coasting actually starts) and during the active coast phase until speed
+    /// drops below [`MIN_SPEED`].
+    fn should_continue_animating(&self) -> bool {
+        self.last_wheel
+            .map(|t| t.elapsed() < Self::COAST_DELAY || self.speed() >= Self::MIN_SPEED)
+            .unwrap_or(false)
+    }
+
+    /// Advances one animation frame.  Returns `(dx, dy, pos)` to scroll this
+    /// frame, or `None` if the coast phase has not yet started or has ended.
+    fn next_frame(&mut self, now: Instant) -> Option<(f64, f64, WebViewPoint)> {
+        let pos = self.cursor_pos?;
+        if !self.is_coasting() || self.speed() < Self::MIN_SPEED {
+            return None;
+        }
+
+        // Clamp dt so a stalled animation (window hidden, etc.) doesn't cause
+        // a huge jump when it resumes.
+        let dt = self
+            .last_frame
+            .map(|t| (now - t).as_secs_f64().min(0.05))
+            .unwrap_or(0.016);
+        self.last_frame = Some(now);
+
+        let decay = (-Self::LAMBDA * dt).exp();
+        self.velocity_x *= decay;
+        self.velocity_y *= decay;
+
+        if self.speed() < Self::MIN_SPEED {
+            self.velocity_x = 0.0;
+            self.velocity_y = 0.0;
+            return None;
+        }
+
+        Some((self.velocity_x * dt, self.velocity_y * dt, pos))
+    }
+
+    /// Immediately stops any in-progress kinetic scroll and resets all state.
+    fn stop(&mut self) {
+        *self = KineticScroll::default();
+    }
 }
 
 /// A read-only iced widget that displays the current Servo WebView frame and
@@ -200,13 +324,13 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
     ) {
         let bounds = layout.bounds();
         let scale = self.scale;
+        let wstate = state.state.downcast_mut::<WebViewState>();
 
         // Notify the embedder when the widget's physical size changes so
         // Servo renders at the exact widget resolution, not the full window size.
         if let Some(on_resize) = &self.on_resize {
             let phys_w = (bounds.width * scale).round() as u32;
             let phys_h = (bounds.height * scale).round() as u32;
-            let wstate = state.state.downcast_mut::<WebViewState>();
             if (phys_w, phys_h) != wstate.last_phys_size && phys_w > 0 && phys_h > 0 {
                 wstate.last_phys_size = (phys_w, phys_h);
                 shell.publish(on_resize(phys_w, phys_h));
@@ -217,6 +341,44 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
             return;
         };
 
+        // Drive the kinetic scroll animation on each display refresh.
+        if let Event::Window(window::Event::RedrawRequested(now)) = event {
+            if let Some((dx, dy, pos)) = wstate.kinetic.next_frame(*now) {
+                shell.publish(on_input(input::kinetic_scroll_event(dx, dy, pos)));
+            }
+            if wstate.kinetic.should_continue_animating() {
+                shell.request_redraw();
+            }
+            return;
+        }
+
+        // A mouse button press cancels any in-progress kinetic coast so the
+        // user's click is not mixed with residual momentum.
+        if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
+            wstate.kinetic.stop();
+        }
+
+        // Accumulate scroll velocity for kinetic coasting.  Both Lines (mouse
+        // wheel) and Pixels (touchpad) events are handled: libinput does not
+        // implement kinetic coasting itself — that is the widget's job.
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+            && let Some(p) = cursor.position_in(bounds)
+        {
+            let pos = input::servo_point(p, scale);
+            let (dx, dy) = match delta {
+                mouse::ScrollDelta::Lines { x, y } => {
+                    (*x as f64 * input::LINE_PX, *y as f64 * input::LINE_PX)
+                }
+                mouse::ScrollDelta::Pixels { x, y } => (
+                    *x as f64 * input::TOUCHPAD_SCROLL_SCALE,
+                    *y as f64 * input::TOUCHPAD_SCROLL_SCALE,
+                ),
+            };
+            wstate.kinetic.on_wheel(dx, dy, pos);
+            shell.request_redraw();
+        }
+
+        // Forward the event to Servo unchanged.
         let servo_event = match event {
             Event::Mouse(me) => {
                 let pos_in_bounds = cursor.position_in(bounds);
@@ -280,5 +442,81 @@ mod tests {
         let frame = WebViewFrame::new();
         let w: WebViewWidget<'_, ()> = WebViewWidget::new(&frame).on_input(|_| ());
         assert!(w.on_input.is_some());
+    }
+
+    // ── KineticScroll ──────────────────────────────────────────────────────────
+
+    fn test_point() -> WebViewPoint {
+        input::servo_point(libcosmic::iced::Point { x: 0.0, y: 0.0 }, 1.0)
+    }
+
+    #[test]
+    fn kinetic_not_coasting_immediately_after_wheel() {
+        let mut k = KineticScroll::default();
+        k.on_wheel(0.0, 38.0, test_point());
+        // Coast delay has not elapsed yet.
+        assert!(!k.is_coasting());
+    }
+
+    #[test]
+    fn kinetic_single_slow_click_builds_low_velocity() {
+        let mut k = KineticScroll::default();
+        // First event — dt defaults to 0.1 s (slow click).
+        k.on_wheel(0.0, 38.0, test_point());
+        // Expected: ALPHA * (38/0.1) = 0.3 * 380 = 114 px/s
+        // A single slow click shouldn't feel like a fast flick.
+        assert!(
+            k.speed() < 200.0,
+            "speed should be moderate for a single click"
+        );
+        assert!(k.speed() > 0.0);
+    }
+
+    #[test]
+    fn kinetic_rapid_spin_builds_higher_velocity() {
+        let mut k = KineticScroll::default();
+        // Simulate several rapid wheel events (each with default 100ms dt).
+        for _ in 0..8 {
+            k.on_wheel(0.0, 38.0, test_point());
+        }
+        // After many rapid events velocity should approach the EWMA ceiling.
+        // With dt≈0.1 the instantaneous sample is 380 px/s; the EWMA converges
+        // toward 380.  Eight events with ALPHA=0.3 bring it close to that.
+        assert!(
+            k.speed() > 200.0,
+            "speed should be high after rapid spinning, got {}",
+            k.speed()
+        );
+    }
+
+    #[test]
+    fn kinetic_stop_resets_state() {
+        let mut k = KineticScroll::default();
+        k.on_wheel(0.0, 38.0, test_point());
+        assert!(k.should_continue_animating());
+
+        k.stop();
+
+        assert!(!k.should_continue_animating());
+        assert!(!k.is_coasting());
+        assert_eq!(k.velocity_x, 0.0);
+        assert_eq!(k.velocity_y, 0.0);
+    }
+
+    #[test]
+    fn kinetic_next_frame_returns_none_before_coast() {
+        let mut k = KineticScroll::default();
+        k.on_wheel(0.0, 38.0, test_point());
+        // next_frame should return None immediately — coast hasn't started yet.
+        assert!(k.next_frame(Instant::now()).is_none());
+    }
+
+    #[test]
+    fn kinetic_should_continue_after_wheel() {
+        let mut k = KineticScroll::default();
+        k.on_wheel(0.0, 38.0, test_point());
+        // Immediately after a wheel event the animation loop must stay alive so
+        // it is present when the coast phase begins.
+        assert!(k.should_continue_animating());
     }
 }

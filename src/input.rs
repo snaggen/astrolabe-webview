@@ -76,9 +76,17 @@ pub(crate) fn mouse_event_to_servo(
     }
 }
 
+/// Standard CSS line height in pixels, used when the platform reports scroll in lines.
+pub(crate) const LINE_PX: f64 = 38.0;
+
+/// Multiplier applied to touchpad pixel-delta scroll events.
+///
+/// libinput reports raw physical displacement in screen pixels with no
+/// acceleration; applying this factor brings the effective scroll speed in
+/// line with typical browser behaviour (Firefox/Chrome use a similar factor).
+pub(crate) const TOUCHPAD_SCROLL_SCALE: f64 = 3.0;
+
 fn scroll_to_wheel(delta: &mouse::ScrollDelta, point: WebViewPoint) -> InputEvent {
-    // Standard CSS line height used when the platform reports scroll lines.
-    const LINE_PX: f64 = 38.0;
     let wheel_delta = match delta {
         mouse::ScrollDelta::Lines { x, y } => WheelDelta {
             x: *x as f64 * LINE_PX,
@@ -87,13 +95,27 @@ fn scroll_to_wheel(delta: &mouse::ScrollDelta, point: WebViewPoint) -> InputEven
             mode: WheelMode::DeltaPixel,
         },
         mouse::ScrollDelta::Pixels { x, y } => WheelDelta {
-            x: *x as f64,
-            y: *y as f64,
+            x: *x as f64 * TOUCHPAD_SCROLL_SCALE,
+            y: *y as f64 * TOUCHPAD_SCROLL_SCALE,
             z: 0.0,
             mode: WheelMode::DeltaPixel,
         },
     };
     InputEvent::Wheel(WheelEvent::new(wheel_delta, point))
+}
+
+/// Creates a [`InputEvent::Wheel`] for kinetic (momentum) scroll continuation.
+///
+/// `dx`/`dy` are logical pixels (same sign convention as Servo's WheelEvent:
+/// positive y = scroll down). `pos` is the cursor position in Servo device pixels.
+pub(crate) fn kinetic_scroll_event(dx: f64, dy: f64, pos: WebViewPoint) -> InputEvent {
+    let delta = WheelDelta {
+        x: dx,
+        y: dy,
+        z: 0.0,
+        mode: WheelMode::DeltaPixel,
+    };
+    InputEvent::Wheel(WheelEvent::new(delta, pos))
 }
 
 // ── Keyboard ──────────────────────────────────────────────────────────────────
@@ -278,8 +300,20 @@ mod tests {
             panic!("wrong variant")
         };
         assert_eq!(e.delta.mode, WheelMode::DeltaPixel);
-        assert!((e.delta.x - 5.0).abs() < 0.01);
-        assert!((e.delta.y - -10.0).abs() < 0.01);
+        assert!((e.delta.x - 5.0 * TOUCHPAD_SCROLL_SCALE).abs() < 0.01);
+        assert!((e.delta.y - -10.0 * TOUCHPAD_SCROLL_SCALE).abs() < 0.01);
+    }
+
+    #[test]
+    fn kinetic_scroll_event_produces_wheel_with_pixel_delta() {
+        let point = servo_point(libcosmic::iced::Point { x: 100.0, y: 200.0 }, 1.0);
+        let event = kinetic_scroll_event(3.0, -7.5, point);
+        let InputEvent::Wheel(e) = event else {
+            panic!("wrong variant")
+        };
+        assert_eq!(e.delta.mode, WheelMode::DeltaPixel);
+        assert!((e.delta.x - 3.0).abs() < 0.01);
+        assert!((e.delta.y - -7.5).abs() < 0.01);
     }
 
     #[test]
