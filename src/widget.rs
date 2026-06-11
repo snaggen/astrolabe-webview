@@ -217,6 +217,10 @@ impl KineticScroll {
 ///         .into()
 /// }
 /// ```
+/// Predicate that flags host keyboard shortcuts so they are not forwarded to
+/// Servo. See [`WebViewWidget::shortcut_filter`].
+type ShortcutFilter<'a> = Box<dyn Fn(&keyboard::Key, keyboard::Modifiers) -> bool + 'a>;
+
 pub struct WebViewWidget<'a, Message> {
     frame: &'a WebViewFrame,
     width: Length,
@@ -243,6 +247,10 @@ pub struct WebViewWidget<'a, Message> {
     /// Fired with a link URL when the user middle-clicks or Ctrl+clicks a link,
     /// for the embedder to open it in a new tab.
     on_open_link: Option<Box<dyn Fn(String) -> Message + 'a>>,
+    /// Predicate identifying host keyboard shortcuts. When it returns `true` for
+    /// a key press, the event is handled by the embedder (e.g. Ctrl+= zoom) and
+    /// is not forwarded to Servo, so the focused page element never sees it.
+    is_shortcut: Option<ShortcutFilter<'a>>,
     _phantom: PhantomData<Message>,
 }
 
@@ -263,6 +271,7 @@ impl<'a, Message> WebViewWidget<'a, Message> {
             on_resize: None,
             on_input: None,
             on_open_link: None,
+            is_shortcut: None,
             _phantom: PhantomData,
         }
     }
@@ -294,6 +303,32 @@ impl<'a, Message> WebViewWidget<'a, Message> {
     pub fn keyboard_enabled(mut self, enabled: bool) -> Self {
         self.keyboard_enabled = enabled;
         self
+    }
+
+    /// Registers a predicate that identifies host keyboard shortcuts.
+    ///
+    /// When it returns `true` for a key press, the event is treated as a window
+    /// shortcut (e.g. Ctrl+= to zoom) and is *not* forwarded to Servo, so the
+    /// focused page element does not also receive the keystroke. The embedder
+    /// still handles the shortcut through its own event subscription.
+    pub fn shortcut_filter(
+        mut self,
+        f: impl Fn(&keyboard::Key, keyboard::Modifiers) -> bool + 'a,
+    ) -> Self {
+        self.is_shortcut = Some(Box::new(f));
+        self
+    }
+
+    /// Whether `event` is a host keyboard shortcut that must not reach Servo.
+    fn is_host_shortcut(&self, event: &keyboard::Event) -> bool {
+        let Some(is_shortcut) = &self.is_shortcut else {
+            return false;
+        };
+        match event {
+            keyboard::Event::KeyPressed { key, modifiers, .. }
+            | keyboard::Event::KeyReleased { key, modifiers, .. } => is_shortcut(key, *modifiers),
+            _ => false,
+        }
     }
 
     /// Sets the current cursor shape as reported by [`ServoState::cursor`].
@@ -541,7 +576,9 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
                 let pos_in_bounds = cursor.position_in(bounds);
                 input::mouse_event_to_servo(me, pos_in_bounds, scale)
             }
-            Event::Keyboard(ke) if self.keyboard_enabled => input::keyboard_event_to_servo(ke),
+            Event::Keyboard(ke) if self.keyboard_enabled && !self.is_host_shortcut(ke) => {
+                input::keyboard_event_to_servo(ke)
+            }
             _ => None,
         };
 
