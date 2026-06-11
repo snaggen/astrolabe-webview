@@ -37,5 +37,5 @@ pub use widget::{WebViewWidget, cursor_interaction};
 // This removes the need for embedders to add servo as a direct dependency.
 pub use servo::{
     ContextMenu, ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl,
-    InputEvent, LoadStatus,
+    InputEvent, LoadStatus, PermissionFeature, PermissionRequest,
 };

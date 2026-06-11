@@ -5,7 +5,8 @@ use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::{
     AuthenticationRequest, Cursor, DeviceIndependentPixel, DeviceIntRect, DevicePixel,
-    EmbedderControl, InputEvent, LoadStatus, RgbaImage, ServoBuilder, WebViewBuilder,
+    EmbedderControl, InputEvent, LoadStatus, PermissionRequest, RgbaImage, ServoBuilder,
+    WebViewBuilder,
 };
 use url::Url;
 
@@ -271,6 +272,15 @@ impl ServoState {
     /// Takes the pending HTTP authentication request, if any.
     pub fn take_auth_request(&self) -> Option<AuthenticationRequest> {
         self.shared.pending_auth.borrow_mut().take()
+    }
+
+    /// Takes the pending permission request, if any.
+    ///
+    /// The embedder responds by calling [`PermissionRequest::allow`] or
+    /// [`PermissionRequest::deny`]; dropping the request without responding
+    /// sends the default (deny) reply.
+    pub fn take_permission_request(&self) -> Option<PermissionRequest> {
+        self.shared.pending_permission.borrow_mut().take()
     }
 
     /// Returns the current cursor shape as last reported by the page.

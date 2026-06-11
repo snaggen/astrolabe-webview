@@ -4,7 +4,7 @@ use std::rc::Rc;
 use async_channel::Sender;
 use servo::{
     AuthenticationRequest, ConsoleLogLevel, Cursor, EmbedderControl, EmbedderControlId, LoadStatus,
-    RenderingContext, ServoDelegate, ServoError, WebView, WebViewDelegate,
+    PermissionRequest, RenderingContext, ServoDelegate, ServoError, WebView, WebViewDelegate,
 };
 use url::Url;
 
@@ -45,6 +45,10 @@ pub(crate) struct SharedState {
     pub pending_dialog: RefCell<Option<EmbedderControl>>,
     /// Pending HTTP authentication request.
     pub pending_auth: RefCell<Option<AuthenticationRequest>>,
+    /// Pending permission request (geolocation, camera, etc.) waiting for the
+    /// app to allow or deny. A new arrival replaces any previous one, which is
+    /// dropped and sends its default (deny) reply automatically.
+    pub pending_permission: RefCell<Option<PermissionRequest>>,
     /// Most recent cursor shape reported by the page.
     pub cursor: Cell<Cursor>,
     /// URL of the hyperlink currently under the cursor, or `None`. Reported by
@@ -73,6 +77,7 @@ impl SharedState {
             frame_pending: Cell::new(false),
             pending_dialog: RefCell::new(None),
             pending_auth: RefCell::new(None),
+            pending_permission: RefCell::new(None),
             cursor: Cell::new(Cursor::Default),
             status_text: RefCell::new(None),
             is_fullscreen: Cell::new(false),
@@ -312,6 +317,11 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         let _ = self.waker_tx.try_send(());
     }
 
+    fn request_permission(&self, _webview: WebView, request: PermissionRequest) {
+        *self.shared.pending_permission.borrow_mut() = Some(request);
+        let _ = self.waker_tx.try_send(());
+    }
+
     fn notify_url_changed(&self, _webview: WebView, url: Url) {
         *self.shared.current_url.borrow_mut() = Some(url);
         let _ = self.waker_tx.try_send(());
@@ -388,6 +398,12 @@ mod tests {
     fn shared_state_pending_auth_initially_none() {
         let shared = SharedState::new();
         assert!(shared.pending_auth.borrow().is_none());
+    }
+
+    #[test]
+    fn shared_state_pending_permission_initially_none() {
+        let shared = SharedState::new();
+        assert!(shared.pending_permission.borrow().is_none());
     }
 
     #[test]
