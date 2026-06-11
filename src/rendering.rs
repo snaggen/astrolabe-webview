@@ -16,6 +16,14 @@ use surfman::{
 // need those crates as direct dependencies.
 use servo::{DeviceIntRect, RgbaImage, SoftwareRenderingContext};
 
+/// Native GL handles for [`servo::Servo::initialize_gl_accelerated_media`]:
+/// `(display, api, context)`.
+pub(crate) type MediaGlHandles = (
+    servo::MediaNativeDisplay,
+    servo::MediaGlApi,
+    servo::MediaGlContext,
+);
+
 /// GPU-accelerated offscreen rendering context for Servo.
 ///
 /// Uses surfman with the system's real GPU adapter and a `SurfaceType::Generic`
@@ -35,6 +43,11 @@ pub struct GpuRenderingContext {
     size: Cell<PhysicalSize<u32>>,
     device: RefCell<Device>,
     context: RefCell<Context>,
+    /// Dedicated context for GStreamer's GL video path, sharing the texture
+    /// namespace with `context`. GStreamer activates it on its own thread —
+    /// handing over `context` itself would fail because it stays current on
+    /// this thread for rendering and readback.
+    media_context: RefCell<Option<Context>>,
     swap_chain: SwapChain<Device>,
     // GL API handles — stored after context creation
     gleam_gl: Rc<dyn Gl>,
@@ -69,6 +82,21 @@ impl GpuRenderingContext {
         };
         let descriptor = device.create_context_descriptor(&ContextAttributes { flags, version })?;
         let mut context = device.create_context(&descriptor, None)?;
+        // Failure to create the media share context only disables GL video
+        // decoding; rendering itself is unaffected.
+        let media_context = cfg!(feature = "gl-media")
+            .then(|| {
+                device
+                    .create_context(&descriptor, Some(&context))
+                    .map_err(|err| {
+                        tracing::warn!(
+                            "No GL media share context ({err:?}); video uses software upload"
+                        );
+                        err
+                    })
+                    .ok()
+            })
+            .flatten();
 
         // SAFETY: function pointers loaded from the GL driver via surfman.
         let gleam_gl = unsafe {
@@ -129,11 +157,66 @@ impl GpuRenderingContext {
             size: Cell::new(size),
             device,
             context,
+            media_context: RefCell::new(media_context),
             swap_chain,
             gleam_gl,
             glow_gl: Arc::new(glow_gl),
             fbo_id: Cell::new(initial_fbo),
         })
+    }
+
+    /// Extracts the native EGL handles Servo needs for GL-accelerated media
+    /// playback ([`servo::Servo::initialize_gl_accelerated_media`]).
+    ///
+    /// Mirrors servoshell's `accelerated_gl_media.rs`. Returns `None` when the
+    /// handles cannot be determined (e.g. GLX); media then falls back to
+    /// software frame upload, which still plays video.
+    #[cfg(target_os = "linux")]
+    fn media_gl_handles(&self) -> Option<MediaGlHandles> {
+        use servo::{MediaGlApi, MediaGlContext, MediaNativeDisplay};
+        use surfman::platform::generic::multi::connection::NativeConnection;
+        use surfman::platform::generic::multi::context::NativeContext;
+
+        let device = self.device.borrow();
+        let context = self.media_context.borrow();
+        let context = context.as_ref()?;
+
+        let media_context = match device.native_context(context) {
+            NativeContext::Default(NativeContext::Default(native)) => {
+                MediaGlContext::Egl(native.egl_context as usize)
+            }
+            NativeContext::Default(NativeContext::Alternate(native)) => {
+                MediaGlContext::Egl(native.egl_context as usize)
+            }
+            // GLX context — the GStreamer GL path is not wired up for it here.
+            NativeContext::Alternate(_) => return None,
+        };
+        let media_display = match device.connection().native_connection() {
+            surfman::NativeConnection::Default(NativeConnection::Default(connection)) => {
+                MediaNativeDisplay::Egl(connection.0 as usize)
+            }
+            surfman::NativeConnection::Default(NativeConnection::Alternate(connection)) => {
+                MediaNativeDisplay::X11(connection.x11_display as usize)
+            }
+            surfman::NativeConnection::Alternate(_) => return None,
+        };
+
+        let descriptor = device.context_descriptor(context);
+        let attributes = device.context_descriptor_attributes(&descriptor);
+        let GLVersion { major, minor } = attributes.version;
+        let api = match device.connection().gl_api() {
+            GLApi::GL if major >= 3 && minor >= 2 => MediaGlApi::OpenGL3,
+            GLApi::GL => MediaGlApi::OpenGL,
+            GLApi::GLES if major > 1 => MediaGlApi::Gles2,
+            GLApi::GLES => MediaGlApi::Gles1,
+        };
+
+        Some((media_display, api, media_context))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn media_gl_handles(&self) -> Option<MediaGlHandles> {
+        None
     }
 
     /// Re-queries the FBO id from the driver and updates the cache.
@@ -150,6 +233,9 @@ impl GpuRenderingContext {
 impl Drop for GpuRenderingContext {
     fn drop(&mut self) {
         let device = self.device.borrow();
+        if let Some(media_context) = self.media_context.borrow_mut().as_mut() {
+            let _ = device.destroy_context(media_context);
+        }
         let mut context = self.context.borrow_mut();
         let _ = self.swap_chain.destroy(&*device, &mut *context);
         let _ = device.destroy_context(&mut *context);
@@ -374,7 +460,12 @@ fn read_pixels_from_fbo(gl: &Rc<dyn Gl>, fbo_id: u32, rect: DeviceIntRect) -> Op
 /// let ctx = ActiveRenderingContext::create(PhysicalSize::new(800_u32, 600));
 /// let rc = ctx.as_rc(); // pass to servo::WebViewBuilder
 /// ```
-pub struct ActiveRenderingContext(Rc<dyn servo::RenderingContext>);
+pub struct ActiveRenderingContext {
+    ctx: Rc<dyn servo::RenderingContext>,
+    /// Native GL handles for GL-accelerated media, captured before the context
+    /// is type-erased. `None` for software rendering.
+    media_gl: Option<MediaGlHandles>,
+}
 
 impl ActiveRenderingContext {
     /// Creates the best available rendering context for `size`.
@@ -385,16 +476,23 @@ impl ActiveRenderingContext {
         match GpuRenderingContext::new(size) {
             Ok(ctx) => {
                 tracing::info!("Using GPU rendering context");
-                Self(Rc::new(ctx))
+                let media_gl = ctx.media_gl_handles();
+                Self {
+                    ctx: Rc::new(ctx),
+                    media_gl,
+                }
             }
             Err(err) => {
                 tracing::warn!("GPU context unavailable ({err:?}), falling back to software");
-                Self(Rc::new(
-                    SoftwareRenderingContext::new(size)
-                        // Software rendering must always be available; if it is not,
-                        // there is no display path and we cannot continue.
-                        .expect("software rendering context must be available"),
-                ))
+                Self {
+                    ctx: Rc::new(
+                        SoftwareRenderingContext::new(size)
+                            // Software rendering must always be available; if it is not,
+                            // there is no display path and we cannot continue.
+                            .expect("software rendering context must be available"),
+                    ),
+                    media_gl: None,
+                }
             }
         }
     }
@@ -402,7 +500,13 @@ impl ActiveRenderingContext {
     /// Returns the inner context as a reference-counted trait object for use
     /// with [`servo::WebViewBuilder`].
     pub fn as_rc(&self) -> Rc<dyn servo::RenderingContext> {
-        self.0.clone()
+        self.ctx.clone()
+    }
+
+    /// Native GL handles for [`servo::Servo::initialize_gl_accelerated_media`],
+    /// if this context is GPU-backed and the handles could be determined.
+    pub(crate) fn media_gl_handles(&self) -> Option<MediaGlHandles> {
+        self.media_gl.clone()
     }
 
     /// Creates a software-only context, bypassing the GPU attempt.
@@ -415,7 +519,10 @@ impl ActiveRenderingContext {
         let ctx = SoftwareRenderingContext::new(size)
             .expect("software rendering context must be available");
         ctx.make_current().expect("make_current");
-        Self(Rc::new(ctx))
+        Self {
+            ctx: Rc::new(ctx),
+            media_gl: None,
+        }
     }
 }
 

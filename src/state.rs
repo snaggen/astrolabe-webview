@@ -6,8 +6,8 @@ use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::{
     AuthenticationRequest, Cursor, DeviceIndependentPixel, DeviceIntRect, DevicePixel,
-    EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest, RgbaImage, ServoBuilder,
-    WebViewBuilder,
+    EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest, Preferences, RgbaImage,
+    ServoBuilder, WebViewBuilder,
 };
 use url::Url;
 
@@ -113,12 +113,35 @@ impl ServoState {
                 (servo.clone(), waker.clone(), rx.clone())
             } else {
                 let (waker, rx) = IcedEventLoopWaker::new();
+                // GL-accelerated media must be registered before the engine is
+                // built. The handles come from the first tab's GPU context; the
+                // GStreamer pipelines create their own contexts shared with it,
+                // so the per-frame readback/dmabuf paths are unaffected. Without
+                // handles (software rendering) media decodes via CPU upload.
+                // GL video decoding is opt-in (`gl-media` feature): Servo
+                // currently composites GStreamer GL textures upside down.
+                // See the feature comment in Cargo.toml.
+                let gl_media = cfg!(feature = "gl-media")
+                    .then(|| rendering_ctx.media_gl_handles())
+                    .flatten();
+                let use_gl_media = gl_media.is_some();
+                if let Some((display, api, context)) = gl_media {
+                    servo::Servo::initialize_gl_accelerated_media(display, api, context);
+                }
                 let opts = Opts {
                     config_dir: PROFILE_DIR.with(|d| d.borrow().clone()),
                     ..Default::default()
                 };
+                let preferences = Preferences {
+                    // Decode video into GL textures shared with the rendering
+                    // context instead of CPU frame upload. Only effective when
+                    // initialize_gl_accelerated_media ran above.
+                    media_glvideo_enabled: use_gl_media,
+                    ..Default::default()
+                };
                 let servo = ServoBuilder::default()
                     .opts(opts)
+                    .preferences(preferences)
                     .event_loop_waker(Box::new(waker.clone()))
                     .build();
                 servo.setup_logging();

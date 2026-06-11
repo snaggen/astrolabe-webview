@@ -9,7 +9,9 @@ license = "EUPL-1.2"
 [dependencies]
 # Web engine — servo 0.2.0 is not yet published on crates.io; pinned to a
 # specific commit 0.2.0. Switch to version = "0.2.0" in crates.io once published.
-servo = { git = "https://github.com/servo/servo", rev = "c2f705ca2ff", default-features = false, features = ["js_jit", "vello", "baked-in-resources"] }
+# media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
+# without it Servo silently falls back to a dummy backend that plays nothing.
+servo = { git = "https://github.com/servo/servo", rev = "c2f705ca2ff", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
@@ -55,6 +57,12 @@ default = ["dmabuf"]
 # dmabuf-shared texture sampled directly by wgpu — no CPU readback. Falls
 # back to CPU readback at runtime whenever any step is unsupported.
 dmabuf = ["dep:ash", "dep:khronos-egl"]
+
+# GL-accelerated video decoding (Servo experimental, opt-in). Disabled by
+# default: WebRender composites GStreamer GL textures upside down — media
+# external images get no Y-flip in GLPlayerExternalImages::lock (servo rev
+# c2f705ca2ff). Without this feature video decodes fine via CPU frame upload.
+gl-media = []
 
 # Enable the XDG desktop portal file chooser (Wayland-native, requires D-Bus).
 # Without this feature FilePicker controls are auto-dismissed.
