@@ -29,7 +29,7 @@ mod widget;
 pub use dialog_handler::DialogMsg;
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
-pub use state::ServoState;
+pub use state::{ServoState, set_profile_dir, shutdown_engine};
 pub use waker::IcedEventLoopWaker;
 pub use widget::{WebViewWidget, cursor_interaction};
 

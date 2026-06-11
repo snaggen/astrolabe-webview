@@ -1,11 +1,12 @@
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::{
     AuthenticationRequest, Cursor, DeviceIndependentPixel, DeviceIntRect, DevicePixel,
-    EmbedderControl, InputEvent, LoadStatus, PermissionRequest, RgbaImage, ServoBuilder,
+    EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest, RgbaImage, ServoBuilder,
     WebViewBuilder,
 };
 use url::Url;
@@ -22,6 +23,26 @@ use crate::waker::IcedEventLoopWaker;
 thread_local! {
     static ENGINE: RefCell<Option<(servo::Servo, IcedEventLoopWaker, async_channel::Receiver<()>)>> =
         const { RefCell::new(None) };
+    /// Profile directory passed to Servo so it can persist cookies, HSTS, etc.
+    /// Set once before the first `ServoState::new`; ignored after the engine starts.
+    static PROFILE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Configure the directory where Servo stores persistent data (cookies, HSTS, auth caches).
+///
+/// Call this once before the first [`ServoState::new`]. If the engine has already
+/// been initialised, this call has no effect.
+pub fn set_profile_dir(dir: PathBuf) {
+    PROFILE_DIR.with(|d| *d.borrow_mut() = Some(dir));
+}
+
+/// Flush Servo's session data to disk and tear down the shared engine.
+///
+/// Drop all [`ServoState`] instances **before** calling this so no other
+/// `Servo` clone is alive. The final drop sends `CoreResourceMsg::Exit` and
+/// waits for the resource thread to write `cookie_jar.json` and friends.
+pub fn shutdown_engine() {
+    ENGINE.with(|c| drop(c.borrow_mut().take()));
 }
 
 /// Drives a single browser tab: one WebView, one rendering context, one frame buffer.
@@ -92,7 +113,12 @@ impl ServoState {
                 (servo.clone(), waker.clone(), rx.clone())
             } else {
                 let (waker, rx) = IcedEventLoopWaker::new();
+                let opts = Opts {
+                    config_dir: PROFILE_DIR.with(|d| d.borrow().clone()),
+                    ..Default::default()
+                };
                 let servo = ServoBuilder::default()
+                    .opts(opts)
                     .event_loop_waker(Box::new(waker.clone()))
                     .build();
                 servo.setup_logging();
