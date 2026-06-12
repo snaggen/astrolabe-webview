@@ -46,6 +46,36 @@ struct WebViewState {
 /// that is the responsibility of each widget. This struct handles both
 /// `Lines`-delta (mouse wheel) and `Pixels`-delta (touchpad) events.
 ///
+/// # Known limitation: cannot stop the coast by resting fingers on the trackpad
+///
+/// On other platforms, resting two fingers on the trackpad halts momentum
+/// scrolling. That cannot be implemented here, because the COSMIC stack delivers
+/// **no event of any kind** when fingers land on the trackpad without moving.
+/// Verified against cosmic-comp + pop-os winit 0.31 (tag `cosmic-0.14`) + the
+/// libcosmic iced fork:
+///
+/// - No `WheelScrolled`, `Touch`, or `Mouse(ButtonPressed)` fires on a finger
+///   rest. A two-finger rest during a coast produced a multi-second gap of total
+///   silence in the event stream.
+/// - No `PanGesture`/`PinchGesture`/`RotationGesture` fires either: libinput's
+///   *hold* gesture (which normally cancels momentum) is not forwarded through
+///   Wayland's `zwp_pointer_gestures` protocol, so winit never receives it.
+/// - Single-finger taps also produce nothing (tap-to-click clicks do not reach
+///   the app). A touchpad is a Wayland *pointer* device, so no `Touch` events
+///   ever fire.
+/// - Raw `winit::DeviceEvent`s do not help: the Wayland backend only emits
+///   `DeviceEvent::PointerMotion` (relative motion, on actual movement) and a
+///   sandboxed Wayland client cannot read libinput/evdev directly.
+///
+/// The zero-delta `Pixels { 0, 0 }` event seen on the wire is libinput's
+/// axis_stop on finger *lift* after motion (it arrives within ~30 ms of the last
+/// motion, inside `COAST_DELAY`) — it is the natural flick-release, not a
+/// finger-down signal, so it must not be used to stop the coast.
+///
+/// A real fix would require cosmic-comp to expose the hold gesture (e.g. via
+/// `wp_pointer_gesture_hold`) and winit + iced to forward it — upstream work
+/// outside this crate.
+///
 /// [`next_frame`]: KineticScroll::next_frame
 /// [`VELOCITY_WINDOW`]: KineticScroll::VELOCITY_WINDOW
 #[derive(Default)]
