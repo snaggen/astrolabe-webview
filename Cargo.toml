@@ -11,7 +11,7 @@ license = "EUPL-1.2"
 # specific commit 0.2.0. Switch to version = "0.2.0" in crates.io once published.
 # media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
 # without it Servo silently falls back to a dummy backend that plays nothing.
-servo = { git = "https://github.com/servo/servo", rev = "c2f705ca2ff", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer"] }
+servo = { git = "https://github.com/servo/servo", rev = "9683e3642cc0e256e9cdbcba7d5f2771b6008f86", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
