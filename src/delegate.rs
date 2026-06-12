@@ -1,10 +1,13 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use async_channel::Sender;
+use content_security_policy::Destination;
 use servo::{
     AuthenticationRequest, ConsoleLogLevel, Cursor, EmbedderControl, EmbedderControlId, LoadStatus,
-    PermissionRequest, RenderingContext, ServoDelegate, ServoError, WebView, WebViewDelegate,
+    PermissionRequest, RenderingContext, ServoDelegate, ServoError, WebResourceLoad,
+    WebResourceResponse, WebView, WebViewDelegate,
 };
 use url::Url;
 
@@ -25,6 +28,13 @@ pub(crate) enum GlShareState {
     Ready(Box<GlImporter>),
     Unavailable,
 }
+
+/// A content filter callback installed per-tab.
+///
+/// Returns `true` when a network request should be blocked.
+/// Arguments: `(request_url, resource_type, source_url)`.
+/// `resource_type` is the adblock resource-type string ("script", "image", …).
+pub type ContentFilterFn = Arc<dyn Fn(&Url, &str, Option<&str>) -> bool + Send + Sync>;
 
 /// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
@@ -66,6 +76,10 @@ pub(crate) struct SharedState {
     pub can_go_back: Cell<bool>,
     /// Whether the session history has a next entry to go forward to.
     pub can_go_forward: Cell<bool>,
+    /// Optional content filter: returns `true` when a request should be blocked.
+    /// `(request_url, resource_type, source_url)` — resource_type is the adblock
+    /// resource type string ("script", "image", "stylesheet" etc.).
+    pub content_filter: Mutex<Option<ContentFilterFn>>,
 }
 
 impl SharedState {
@@ -86,6 +100,7 @@ impl SharedState {
             title: RefCell::new(None),
             can_go_back: Cell::new(false),
             can_go_forward: Cell::new(false),
+            content_filter: Mutex::new(None),
         })
     }
 }
@@ -347,6 +362,35 @@ impl WebViewDelegate for CosmicWebViewDelegate {
             _ => tracing::info!(target: "webview::console", "{message}"),
         }
     }
+
+    fn load_web_resource(&self, _webview: WebView, load: WebResourceLoad) {
+        let filter = self.shared.content_filter.lock().unwrap();
+        let Some(f) = filter.as_ref() else {
+            return; // no filter — DoNotIntercept (load is dropped)
+        };
+
+        // Extract everything we need before consuming `load` via intercept().
+        let (url, resource_type, source) = {
+            let req = load.request();
+            let url = req.url.clone();
+            let resource_type = destination_to_resource_type(&req.destination);
+            let source = req.referrer_url.as_ref().map(|u| u.to_string());
+            (url, resource_type, source)
+        };
+
+        if f(&url, resource_type, source.as_deref()) {
+            tracing::debug!(
+                url = %url,
+                resource_type,
+                source = source.as_deref().unwrap_or("-"),
+                "blocked"
+            );
+            // Return an empty 200 rather than cancelling: a network error on a
+            // cancelled sub-resource causes noisy console output on many pages.
+            load.intercept(WebResourceResponse::new(url)).finish();
+        }
+        // else: drop load → DoNotIntercept
+    }
 }
 
 /// Handles engine-level errors and forwards them to the tracing subscriber.
@@ -355,6 +399,28 @@ pub(crate) struct CosmicServoDelegate;
 impl ServoDelegate for CosmicServoDelegate {
     fn notify_error(&self, error: ServoError) {
         tracing::error!("Servo engine error: {error:?}");
+    }
+}
+
+/// Maps a CSP `Destination` to the resource-type string expected by the
+/// adblock crate. Unknown/worklet types fall back to `"other"`.
+fn destination_to_resource_type(dest: &Destination) -> &'static str {
+    match dest {
+        // Destination::None is the fetch/XHR/beacon destination (empty string in the
+        // CSP spec). Tracking pixels and analytics almost always use this path, so
+        // mapping to "xmlhttprequest" is essential for EasyPrivacy rules to match.
+        Destination::None => "xmlhttprequest",
+        Destination::Audio | Destination::Video | Destination::Track => "media",
+        Destination::Document | Destination::Frame | Destination::IFrame => "subdocument",
+        Destination::Embed | Destination::Object => "object",
+        Destination::Font => "font",
+        Destination::Image => "image",
+        Destination::Script
+        | Destination::Worker
+        | Destination::ServiceWorker
+        | Destination::SharedWorker => "script",
+        Destination::Style | Destination::Xslt => "stylesheet",
+        _ => "other",
     }
 }
 

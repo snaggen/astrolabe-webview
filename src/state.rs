@@ -11,7 +11,7 @@ use servo::{
 };
 use url::Url;
 
-use crate::delegate::{CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
+use crate::delegate::{ContentFilterFn, CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
 use crate::dialog_handler::{DialogHandler, DialogMsg};
 use crate::primitive::WebViewFrame;
 use crate::rendering::{ActiveRenderingContext, read_frame_into_sink};
@@ -274,6 +274,16 @@ impl ServoState {
 
     pub fn load_status(&self) -> LoadStatus {
         self.shared.load_status.get()
+    }
+
+    /// Install or remove a content filter for this tab.
+    ///
+    /// The closure receives `(request_url, resource_type, source_url)` and
+    /// returns `true` when the request should be blocked. `resource_type` is
+    /// the adblock resource-type string ("script", "image", "stylesheet", …).
+    /// Pass `None` to disable filtering.
+    pub fn set_content_filter(&self, filter: Option<ContentFilterFn>) {
+        *self.shared.content_filter.lock().unwrap() = filter;
     }
 
     /// Returns a monotonically increasing counter that increments each time

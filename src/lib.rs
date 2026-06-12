@@ -13,7 +13,7 @@
 //! let (state, waker_rx) = ServoState::new(url, size, 1.0);
 //! ```
 
-mod delegate;
+pub(crate) mod delegate;
 pub mod dialog_handler;
 pub mod dialogs;
 #[cfg(all(target_os = "linux", feature = "dmabuf"))]
@@ -26,6 +26,7 @@ mod waker;
 mod widget;
 
 // Public API
+pub use delegate::ContentFilterFn;
 pub use dialog_handler::DialogMsg;
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};

@@ -28,6 +28,9 @@ iced_wgpu    = { path = "../cosmic-epoch/libcosmic/iced/wgpu" }
 # Servo/iced boundary without requiring Servo to be Send.
 async-channel = "2"
 
+# CSP Destination enum, used to map Servo resource types to adblock type strings.
+content-security-policy = "0.8"
+
 # URL parsing and physical pixel sizes
 url = "2.5"
 dpi = "0.1"
