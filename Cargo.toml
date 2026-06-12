@@ -11,7 +11,7 @@ license = "EUPL-1.2"
 # specific commit 0.2.0. Switch to version = "0.2.0" in crates.io once published.
 # media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
 # without it Servo silently falls back to a dummy backend that plays nothing.
-servo = { git = "https://github.com/servo/servo", rev = "9683e3642cc0e256e9cdbcba7d5f2771b6008f86", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer"] }
+servo = { git = "https://github.com/servo/servo", rev = "bab0ee8a0089744df67837c4895989afedb4850c", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
@@ -38,6 +38,10 @@ tracing = "0.1"
 
 # TLS provider — must be initialised once before Servo starts networking.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
+# time 0.3.48 added a From<HourBase> impl that conflicts with cookie's blanket
+# From<T: Into<Option<OffsetDateTime>>> impl (E0119). Pin until cookie is fixed.
+time = "=0.3.47"
 
 # Zero-copy GPU frame sharing (dmabuf): Vulkan memory export via ash (same
 # version as wgpu-hal uses internally) and EGL dmabuf import via khronos-egl.
