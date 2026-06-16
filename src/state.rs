@@ -29,6 +29,57 @@ thread_local! {
     /// Whether `getUserMedia` (camera & microphone) is enabled. Read when the
     /// engine starts and updatable at runtime via [`set_camera_microphone_enabled`].
     static WEBRTC_ENABLED: Cell<bool> = const { Cell::new(false) };
+    /// Default web-content fonts. Read when the engine starts and updatable at
+    /// runtime via [`set_web_fonts`].
+    static WEB_FONTS: RefCell<Option<WebFonts>> = const { RefCell::new(None) };
+}
+
+/// Default fonts for web content — the page's serif, sans-serif, and monospace
+/// families and base sizes, like a browser's font settings. An empty family
+/// string uses Servo's built-in default for that generic family.
+#[derive(Clone, Debug)]
+pub struct WebFonts {
+    pub serif: String,
+    pub sans_serif: String,
+    pub monospace: String,
+    pub default_size: i64,
+    pub monospace_size: i64,
+}
+
+impl Default for WebFonts {
+    fn default() -> Self {
+        // Mirrors Servo's own pref defaults.
+        Self {
+            serif: String::new(),
+            sans_serif: String::new(),
+            monospace: String::new(),
+            default_size: 16,
+            monospace_size: 13,
+        }
+    }
+}
+
+/// Configure the default fonts used to render web content.
+///
+/// Call before the first [`ServoState::new`] to apply from the first page load;
+/// calling later updates the running engine and takes effect on the next load.
+pub fn set_web_fonts(fonts: WebFonts) {
+    apply_web_fonts(&fonts);
+    WEB_FONTS.with(|f| *f.borrow_mut() = Some(fonts));
+}
+
+/// Push web-font preferences into the running engine, if any.
+fn apply_web_fonts(fonts: &WebFonts) {
+    with_engine(|servo| {
+        servo.set_preference("fonts_serif", PrefValue::Str(fonts.serif.clone()));
+        servo.set_preference("fonts_sans_serif", PrefValue::Str(fonts.sans_serif.clone()));
+        servo.set_preference("fonts_monospace", PrefValue::Str(fonts.monospace.clone()));
+        servo.set_preference("fonts_default_size", PrefValue::Int(fonts.default_size));
+        servo.set_preference(
+            "fonts_default_monospace_size",
+            PrefValue::Int(fonts.monospace_size),
+        );
+    });
 }
 
 /// Configure the directory where Servo stores persistent data (cookies, HSTS, auth caches).
@@ -185,6 +236,7 @@ impl ServoState {
                     config_dir: PROFILE_DIR.with(|d| d.borrow().clone()),
                     ..Default::default()
                 };
+                let web_fonts = WEB_FONTS.with(|f| f.borrow().clone()).unwrap_or_default();
                 let preferences = Preferences {
                     // Decode video into GL textures shared with the rendering
                     // context instead of CPU frame upload. Only effective when
@@ -208,6 +260,12 @@ impl ServoState {
                     dom_bluetooth_enabled: true,
                     // getUserMedia is an explicit opt-in (auto-grants, no prompt).
                     dom_webrtc_enabled: WEBRTC_ENABLED.with(Cell::get),
+                    // Default web-content fonts (empty family = Servo default).
+                    fonts_serif: web_fonts.serif,
+                    fonts_sans_serif: web_fonts.sans_serif,
+                    fonts_monospace: web_fonts.monospace,
+                    fonts_default_size: web_fonts.default_size,
+                    fonts_default_monospace_size: web_fonts.monospace_size,
                     ..Default::default()
                 };
                 let servo = ServoBuilder::default()
