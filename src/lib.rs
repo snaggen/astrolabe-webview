@@ -19,6 +19,7 @@ pub mod dialogs;
 #[cfg(all(target_os = "linux", feature = "dmabuf"))]
 pub(crate) mod gpu_share;
 pub(crate) mod input;
+pub mod permission;
 pub mod primitive;
 mod rendering;
 mod state;
@@ -31,8 +32,8 @@ pub use dialog_handler::DialogMsg;
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::{
-    ServoState, clear_all_cookies, clear_site_data, list_site_data, set_profile_dir,
-    shutdown_engine,
+    ServoState, clear_all_cookies, clear_site_data, list_site_data,
+    set_camera_microphone_enabled, set_profile_dir, shutdown_engine,
 };
 pub use waker::IcedEventLoopWaker;
 pub use widget::{WebViewWidget, cursor_interaction};
@@ -40,6 +41,7 @@ pub use widget::{WebViewWidget, cursor_interaction};
 // Re-export servo types that embedding applications need directly.
 // This removes the need for embedders to add servo as a direct dependency.
 pub use servo::{
-    ContextMenu, ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl,
-    InputEvent, LoadStatus, PermissionFeature, PermissionRequest, SiteData,
+    BluetoothDeviceDescription, BluetoothDeviceSelectionRequest, ContextMenu, ContextMenuAction,
+    ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent, LoadStatus, PermissionFeature,
+    PermissionRequest, SiteData,
 };

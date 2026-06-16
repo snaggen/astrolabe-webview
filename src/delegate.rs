@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use async_channel::Sender;
 use content_security_policy::Destination;
 use servo::{
-    AuthenticationRequest, ConsoleLogLevel, Cursor, EmbedderControl, EmbedderControlId, LoadStatus,
-    PermissionRequest, RenderingContext, ServoDelegate, ServoError, WebResourceLoad,
-    WebResourceResponse, WebView, WebViewDelegate,
+    AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel, Cursor,
+    EmbedderControl, EmbedderControlId, LoadStatus, PermissionRequest, RenderingContext,
+    ServoDelegate, ServoError, WebResourceLoad, WebResourceResponse, WebView, WebViewDelegate,
 };
 use url::Url;
 
@@ -59,6 +59,10 @@ pub(crate) struct SharedState {
     /// app to allow or deny. A new arrival replaces any previous one, which is
     /// dropped and sends its default (deny) reply automatically.
     pub pending_permission: RefCell<Option<PermissionRequest>>,
+    /// Pending Bluetooth device-selection request waiting for the user to pick a
+    /// device or cancel. A new arrival replaces any previous one, which is dropped
+    /// and cancels automatically.
+    pub pending_bluetooth: RefCell<Option<BluetoothDeviceSelectionRequest>>,
     /// Most recent cursor shape reported by the page.
     pub cursor: Cell<Cursor>,
     /// URL of the hyperlink currently under the cursor, or `None`. Reported by
@@ -92,6 +96,7 @@ impl SharedState {
             pending_dialog: RefCell::new(None),
             pending_auth: RefCell::new(None),
             pending_permission: RefCell::new(None),
+            pending_bluetooth: RefCell::new(None),
             cursor: Cell::new(Cursor::Default),
             status_text: RefCell::new(None),
             is_fullscreen: Cell::new(false),
@@ -334,6 +339,15 @@ impl WebViewDelegate for CosmicWebViewDelegate {
 
     fn request_permission(&self, _webview: WebView, request: PermissionRequest) {
         *self.shared.pending_permission.borrow_mut() = Some(request);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn show_bluetooth_device_dialog(
+        &self,
+        _webview: WebView,
+        request: BluetoothDeviceSelectionRequest,
+    ) {
+        *self.shared.pending_bluetooth.borrow_mut() = Some(request);
         let _ = self.waker_tx.try_send(());
     }
 

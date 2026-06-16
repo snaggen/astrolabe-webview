@@ -11,7 +11,9 @@ license = "EUPL-1.2"
 # specific commit 0.2.0. Switch to version = "0.2.0" in crates.io once published.
 # media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
 # without it Servo silently falls back to a dummy backend that plays nothing.
-servo = { git = "https://github.com/servo/servo", rev = "bab0ee8a0089744df67837c4895989afedb4850c", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer"] }
+# bluetooth enables the Web Bluetooth DOM API; native-bluetooth adds the real
+# BLE backend (btleplug → BlueZ/D-Bus) instead of the mock used for tests.
+servo = { git = "https://github.com/servo/servo", rev = "bab0ee8a0089744df67837c4895989afedb4850c", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions

@@ -1,13 +1,13 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::{
-    AuthenticationRequest, Cursor, DeviceIndependentPixel, DeviceIntRect, DevicePixel,
-    EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest, Preferences, RgbaImage,
-    ServoBuilder, SiteData, StorageType, WebViewBuilder,
+    AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor, DeviceIndependentPixel,
+    DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest,
+    Preferences, PrefValue, RgbaImage, ServoBuilder, SiteData, StorageType, WebViewBuilder,
 };
 use url::Url;
 
@@ -26,6 +26,9 @@ thread_local! {
     /// Profile directory passed to Servo so it can persist cookies, HSTS, etc.
     /// Set once before the first `ServoState::new`; ignored after the engine starts.
     static PROFILE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    /// Whether `getUserMedia` (camera & microphone) is enabled. Read when the
+    /// engine starts and updatable at runtime via [`set_camera_microphone_enabled`].
+    static WEBRTC_ENABLED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Configure the directory where Servo stores persistent data (cookies, HSTS, auth caches).
@@ -34,6 +37,18 @@ thread_local! {
 /// been initialised, this call has no effect.
 pub fn set_profile_dir(dir: PathBuf) {
     PROFILE_DIR.with(|d| *d.borrow_mut() = Some(dir));
+}
+
+/// Enable or disable `getUserMedia` (camera & microphone access). Off by default.
+///
+/// Servo grants media access without a per-request permission prompt, so this is
+/// an all-or-nothing switch that should be exposed to the user as an explicit
+/// opt-in. Call before the first [`ServoState::new`] to apply from the first page
+/// load; calling afterwards updates the running engine and takes effect on the
+/// next page load.
+pub fn set_camera_microphone_enabled(enabled: bool) {
+    WEBRTC_ENABLED.with(|c| c.set(enabled));
+    with_engine(|servo| servo.set_preference("dom_webrtc_enabled", PrefValue::Bool(enabled)));
 }
 
 /// Flush Servo's session data to disk and tear down the shared engine.
@@ -175,6 +190,24 @@ impl ServoState {
                     // context instead of CPU frame upload. Only effective when
                     // initialize_gl_accelerated_media ran above.
                     media_glvideo_enabled: use_gl_media,
+                    // Permission-gated DOM APIs are off by default in Servo. Only
+                    // enable those that actually route through the embedder's
+                    // permission prompt (`EmbedderMsg::PromptPermission`):
+                    // notifications, persistent storage, and `navigator
+                    // .permissions.request()`. Other features are deliberately
+                    // left off: Servo's getUserMedia grants camera/microphone
+                    // WITHOUT any prompt (a privacy hole), geolocation's prompt
+                    // step is unimplemented (it hangs), and Bluetooth is gated by
+                    // a Cargo feature that is not built in. Re-enable each here
+                    // once Servo wires it to the permission prompt.
+                    dom_notification_enabled: true,
+                    dom_permissions_enabled: true,
+                    dom_storage_manager_api_enabled: true,
+                    // Bluetooth routes through the embedder's device-selection
+                    // dialog (built with the `bluetooth` Cargo feature).
+                    dom_bluetooth_enabled: true,
+                    // getUserMedia is an explicit opt-in (auto-grants, no prompt).
+                    dom_webrtc_enabled: WEBRTC_ENABLED.with(Cell::get),
                     ..Default::default()
                 };
                 let servo = ServoBuilder::default()
@@ -378,6 +411,16 @@ impl ServoState {
     /// sends the default (deny) reply.
     pub fn take_permission_request(&self) -> Option<PermissionRequest> {
         self.shared.pending_permission.borrow_mut().take()
+    }
+
+    /// Takes the pending Bluetooth device-selection request, if any.
+    ///
+    /// The embedder responds by calling
+    /// [`BluetoothDeviceSelectionRequest::pick_device`] or
+    /// [`BluetoothDeviceSelectionRequest::cancel`]; dropping it without
+    /// responding cancels the request.
+    pub fn take_bluetooth_request(&self) -> Option<BluetoothDeviceSelectionRequest> {
+        self.shared.pending_bluetooth.borrow_mut().take()
     }
 
     /// Returns the current cursor shape as last reported by the page.
