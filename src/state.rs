@@ -7,7 +7,7 @@ use euclid::Scale;
 use servo::{
     AuthenticationRequest, Cursor, DeviceIndependentPixel, DeviceIntRect, DevicePixel,
     EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest, Preferences, RgbaImage,
-    ServoBuilder, WebViewBuilder,
+    ServoBuilder, SiteData, StorageType, WebViewBuilder,
 };
 use url::Url;
 
@@ -43,6 +43,44 @@ pub fn set_profile_dir(dir: PathBuf) {
 /// waits for the resource thread to write `cookie_jar.json` and friends.
 pub fn shutdown_engine() {
     ENGINE.with(|c| drop(c.borrow_mut().take()));
+}
+
+/// Run `f` with the shared engine if it has been initialised; otherwise do nothing.
+fn with_engine<R>(f: impl FnOnce(&servo::Servo) -> R) -> Option<R> {
+    ENGINE.with(|c| c.borrow().as_ref().map(|(servo, ..)| f(servo)))
+}
+
+/// Site data categories that can be listed and cleared: cookies, `localStorage`,
+/// and `sessionStorage`. Servo's engine does not expose HTTP cache or IndexedDB
+/// clearing, so those are intentionally absent.
+pub fn all_storage_types() -> StorageType {
+    StorageType::Cookies | StorageType::Local | StorageType::Session
+}
+
+/// List the sites that currently hold cookies or web storage, with the data
+/// categories each one uses. Returns an empty list if the engine is not running.
+pub fn list_site_data() -> Vec<SiteData> {
+    with_engine(|servo| servo.site_data_manager().site_data(all_storage_types())).unwrap_or_default()
+}
+
+/// Delete cookies and web storage for the given registrable domains.
+///
+/// The in-memory cookie jar is updated immediately; the (now reduced) jar is
+/// written to disk on the next [`shutdown_engine`].
+pub fn clear_site_data(sites: &[&str]) {
+    with_engine(|servo| {
+        servo
+            .site_data_manager()
+            .clear_site_data(sites, all_storage_types());
+    });
+}
+
+/// Delete all cookies from the engine's cookie jar.
+///
+/// Web storage is left untouched — call [`clear_site_data`] for that. The empty
+/// jar is persisted on the next [`shutdown_engine`].
+pub fn clear_all_cookies() {
+    with_engine(|servo| servo.site_data_manager().clear_cookies(None));
 }
 
 /// Drives a single browser tab: one WebView, one rendering context, one frame buffer.

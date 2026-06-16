@@ -30,7 +30,10 @@ pub use delegate::ContentFilterFn;
 pub use dialog_handler::DialogMsg;
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
-pub use state::{ServoState, set_profile_dir, shutdown_engine};
+pub use state::{
+    ServoState, clear_all_cookies, clear_site_data, list_site_data, set_profile_dir,
+    shutdown_engine,
+};
 pub use waker::IcedEventLoopWaker;
 pub use widget::{WebViewWidget, cursor_interaction};
 
@@ -38,5 +41,5 @@ pub use widget::{WebViewWidget, cursor_interaction};
 // This removes the need for embedders to add servo as a direct dependency.
 pub use servo::{
     ContextMenu, ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl,
-    InputEvent, LoadStatus, PermissionFeature, PermissionRequest,
+    InputEvent, LoadStatus, PermissionFeature, PermissionRequest, SiteData,
 };
