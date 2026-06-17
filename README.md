@@ -4,10 +4,10 @@
 > [COSMIC Desktop Environment](https://github.com/pop-os/cosmic-epoch). The name is lazy naming,
 > nothing more.
 >
-> This is a personal, experimental project. See [cosmic-web](../cosmic-web) for context.
+> This is a personal, experimental project. See [cosmic-web](https://codeberg.org/snaggen/cosmic-web) for context.
 
 A [Servo](https://servo.org/)-based WebView widget for applications built on the
-[COSMIC](https://github.com/pop-os/cosmic-epoch) UI toolkit (iced + wgpu).
+[libcosmic](https://github.com/pop-os/libcosmic) UI toolkit (iced + wgpu).
 
 ## Features
 
