@@ -16,6 +16,7 @@
 pub(crate) mod delegate;
 pub mod dialog_handler;
 pub mod dialogs;
+pub mod find_bar;
 #[cfg(all(target_os = "linux", feature = "dmabuf"))]
 pub(crate) mod gpu_share;
 pub(crate) mod input;
@@ -29,11 +30,13 @@ mod widget;
 // Public API
 pub use delegate::ContentFilterFn;
 pub use dialog_handler::DialogMsg;
+pub use find_bar::{FIND_BAR_ID, FindBar, FindBarMsg, FindBarState, FindResult};
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::{
     ServoState, WebFonts, clear_all_cookies, clear_site_data, list_site_data,
-    set_camera_microphone_enabled, set_profile_dir, set_web_fonts, shutdown_engine,
+    set_camera_microphone_enabled, set_devtools_enabled, set_profile_dir, set_web_fonts,
+    shutdown_engine,
 };
 pub use waker::IcedEventLoopWaker;
 pub use widget::{WebViewWidget, cursor_interaction};
@@ -42,6 +45,6 @@ pub use widget::{WebViewWidget, cursor_interaction};
 // This removes the need for embedders to add servo as a direct dependency.
 pub use servo::{
     BluetoothDeviceDescription, BluetoothDeviceSelectionRequest, ContextMenu, ContextMenuAction,
-    ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent, LoadStatus, PermissionFeature,
-    PermissionRequest, SiteData,
+    ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent, LoadStatus,
+    PermissionFeature, PermissionRequest, SiteData,
 };

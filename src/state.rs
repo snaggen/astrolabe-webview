@@ -6,13 +6,15 @@ use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::{
     AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor, DeviceIndependentPixel,
-    DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, LoadStatus, Opts, PermissionRequest,
-    Preferences, PrefValue, RgbaImage, ServoBuilder, SiteData, StorageType, WebViewBuilder,
+    DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError,
+    LoadStatus, Opts, PermissionRequest, PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData,
+    StorageType, WebViewBuilder,
 };
 use url::Url;
 
 use crate::delegate::{ContentFilterFn, CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
 use crate::dialog_handler::{DialogHandler, DialogMsg};
+use crate::find_bar::FindResult;
 use crate::primitive::WebViewFrame;
 use crate::rendering::{ActiveRenderingContext, read_frame_into_sink};
 use crate::waker::IcedEventLoopWaker;
@@ -32,6 +34,9 @@ thread_local! {
     /// Default web-content fonts. Read when the engine starts and updatable at
     /// runtime via [`set_web_fonts`].
     static WEB_FONTS: RefCell<Option<WebFonts>> = const { RefCell::new(None) };
+    /// Port for the Servo remote devtools server, or `None` if disabled.
+    /// Read once at engine startup — changing it afterwards has no effect.
+    static DEVTOOLS_PORT: Cell<Option<u16>> = const { Cell::new(None) };
 }
 
 /// Default fonts for web content — the page's serif, sans-serif, and monospace
@@ -82,6 +87,18 @@ fn apply_web_fonts(fonts: &WebFonts) {
     });
 }
 
+/// Enable the Servo remote devtools server on the given port.
+///
+/// Call once before the first [`ServoState::new`]; the engine is initialised
+/// only once per process, so later calls have no effect.
+///
+/// The server implements the Firefox Remote Debugging Protocol. Once running,
+/// connect from Firefox via *Remote Debugging → Connect to localhost:PORT*.
+/// The default port used by servoshell is 7000; a common alternative is 9222.
+pub fn set_devtools_enabled(port: u16) {
+    DEVTOOLS_PORT.with(|c| c.set(Some(port)));
+}
+
 /// Configure the directory where Servo stores persistent data (cookies, HSTS, auth caches).
 ///
 /// Call this once before the first [`ServoState::new`]. If the engine has already
@@ -126,7 +143,8 @@ pub fn all_storage_types() -> StorageType {
 /// List the sites that currently hold cookies or web storage, with the data
 /// categories each one uses. Returns an empty list if the engine is not running.
 pub fn list_site_data() -> Vec<SiteData> {
-    with_engine(|servo| servo.site_data_manager().site_data(all_storage_types())).unwrap_or_default()
+    with_engine(|servo| servo.site_data_manager().site_data(all_storage_types()))
+        .unwrap_or_default()
 }
 
 /// Delete cookies and web storage for the given registrable domains.
@@ -237,6 +255,7 @@ impl ServoState {
                     ..Default::default()
                 };
                 let web_fonts = WEB_FONTS.with(|f| f.borrow().clone()).unwrap_or_default();
+                let devtools_port = DEVTOOLS_PORT.with(Cell::get);
                 let preferences = Preferences {
                     // Decode video into GL textures shared with the rendering
                     // context instead of CPU frame upload. Only effective when
@@ -260,6 +279,11 @@ impl ServoState {
                     dom_bluetooth_enabled: true,
                     // getUserMedia is an explicit opt-in (auto-grants, no prompt).
                     dom_webrtc_enabled: WEBRTC_ENABLED.with(Cell::get),
+                    // Remote devtools server (Firefox Remote Debugging Protocol).
+                    devtools_server_enabled: devtools_port.is_some(),
+                    devtools_server_listen_address: devtools_port
+                        .map(|p| format!("127.0.0.1:{p}"))
+                        .unwrap_or_default(),
                     // Default web-content fonts (empty family = Servo default).
                     fonts_serif: web_fonts.serif,
                     fonts_sans_serif: web_fonts.sans_serif,
@@ -523,6 +547,220 @@ impl ServoState {
     pub fn take_crash(&self) -> Option<(String, Option<String>)> {
         self.shared.crashed.borrow_mut().take()
     }
+
+    // ── Find-in-page ─────────────────────────────────────────────────────────
+
+    /// Start a new find session: inject `<mark>` elements for all matches,
+    /// highlight the current match in orange, and scroll it into view.
+    ///
+    /// Returns a [`FindResult`] with `total` and `current = 1` (or both zero).
+    ///
+    /// Uses DOM mutation (`<mark>` elements + injected CSS) rather than
+    /// `window.find()` (absent in Servo) or `Selection` (not rendered visually
+    /// in Servo's embedder mode).
+    pub fn find(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        _wrap: bool,
+    ) -> libcosmic::iced::Task<FindResult> {
+        if query.is_empty() {
+            self.find_clear();
+            return libcosmic::iced::Task::done(FindResult::default());
+        }
+        let q = escape_js(query);
+        let flags = if case_sensitive { "g" } else { "gi" };
+        let script = format!(
+            r#"(function(){{
+                var old=document.querySelectorAll('mark.cf');
+                for(var i=0;i<old.length;i++){{
+                    var par=old[i].parentNode;
+                    if(par)par.replaceChild(document.createTextNode(old[i].textContent),old[i]);
+                }}
+                if(document.body)document.body.normalize();
+                window.__cosmicFind=null;
+                if(!document.body)return 0;
+                if(!document.getElementById('cf-style')){{
+                    var s=document.createElement('style');
+                    s.id='cf-style';
+                    s.textContent='mark.cf{{background:#ffff00!important;color:#000000!important;border-radius:2px}}mark.cfc{{background:#ff8000!important;color:#000000!important}}';
+                    document.head.appendChild(s);
+                }}
+                var regex=new RegExp("{q}".replace(/[.*+?^${{}}()|[\]\\]/g,'\\$&'),'{flags}');
+                var walker=document.createTreeWalker(document.body,4);
+                var textNodes=[];
+                var node;
+                while((node=walker.nextNode())){{
+                    var pn=node.parentNode;
+                    var pname=pn?pn.nodeName:'';
+                    if(pname!=='SCRIPT'&&pname!=='STYLE'&&pname!=='NOSCRIPT'&&pname!=='MARK'){{
+                        textNodes.push(node);
+                    }}
+                }}
+                var marks=[];
+                for(var ti=0;ti<textNodes.length;ti++){{
+                    var tn=textNodes[ti];
+                    if(!tn.parentNode)continue;
+                    var text=tn.nodeValue;
+                    var parts=[];
+                    regex.lastIndex=0;
+                    var m;
+                    var lastIdx=0;
+                    var hasMatch=false;
+                    while((m=regex.exec(text))!==null){{
+                        hasMatch=true;
+                        if(m.index>lastIdx)parts.push(document.createTextNode(text.slice(lastIdx,m.index)));
+                        var mark=document.createElement('mark');
+                        mark.className='cf';
+                        mark.textContent=m[0];
+                        parts.push(mark);
+                        marks.push(mark);
+                        lastIdx=m.index+m[0].length;
+                    }}
+                    if(hasMatch){{
+                        if(lastIdx<text.length)parts.push(document.createTextNode(text.slice(lastIdx)));
+                        var parent=tn.parentNode;
+                        if(parent){{
+                            for(var pi=0;pi<parts.length;pi++)parent.insertBefore(parts[pi],tn);
+                            parent.removeChild(tn);
+                        }}
+                    }}
+                }}
+                window.__cosmicFind={{marks:marks,current:0}};
+                if(marks.length>0){{
+                    marks[0].className='cf cfc';
+                    marks[0].scrollIntoView({{block:'nearest'}});
+                }}
+                return marks.length;
+            }})()"#,
+        );
+        self.eval_js(script, |val| {
+            let total = match val {
+                JSValue::Number(n) => n as usize,
+                _ => 0,
+            };
+            FindResult {
+                current: if total > 0 { 1 } else { 0 },
+                total,
+            }
+        })
+    }
+
+    /// Navigate to the next match in the page.
+    ///
+    /// Updates the `cfc` CSS class on `<mark>` elements to advance the
+    /// highlighted match and scrolls it into view. Returns the new 1-based
+    /// current index, or `0` if there are no matches or wrap is disabled and
+    /// the last match is already selected.
+    pub fn find_next(&self, wrap: bool) -> libcosmic::iced::Task<usize> {
+        let script = format!(
+            r#"(function(){{
+                if(!window.__cosmicFind)return 0;
+                var f=window.__cosmicFind;
+                var total=f.marks.length;
+                if(total===0)return 0;
+                var next=f.current+1;
+                if(next>=total){{
+                    if(!{wrap})return f.current+1;
+                    next=0;
+                }}
+                f.marks[f.current].className='cf';
+                f.current=next;
+                f.marks[next].className='cf cfc';
+                f.marks[next].scrollIntoView({{block:'nearest'}});
+                return next+1;
+            }})()"#,
+        );
+        self.eval_js(script, |val| match val {
+            JSValue::Number(n) => n as usize,
+            _ => 0,
+        })
+    }
+
+    /// Navigate to the previous match in the page.
+    ///
+    /// Like [`find_next`] but searches backwards. Returns the new 1-based
+    /// current index, or `0` if there are no matches.
+    pub fn find_prev(&self, wrap: bool) -> libcosmic::iced::Task<usize> {
+        let script = format!(
+            r#"(function(){{
+                if(!window.__cosmicFind)return 0;
+                var f=window.__cosmicFind;
+                var total=f.marks.length;
+                if(total===0)return 0;
+                var prev=f.current-1;
+                if(prev<0){{
+                    if(!{wrap})return f.current+1;
+                    prev=total-1;
+                }}
+                f.marks[f.current].className='cf';
+                f.current=prev;
+                f.marks[prev].className='cf cfc';
+                f.marks[prev].scrollIntoView({{block:'nearest'}});
+                return prev+1;
+            }})()"#,
+        );
+        self.eval_js(script, |val| match val {
+            JSValue::Number(n) => n as usize,
+            _ => 0,
+        })
+    }
+
+    /// Clear the current find session: remove all injected `<mark>` elements
+    /// and restore the original text nodes.
+    pub fn find_clear(&self) {
+        self.webview.evaluate_javascript(
+            r#"(function(){
+                if(window.__cosmicFind){
+                    var marks=window.__cosmicFind.marks;
+                    for(var i=0;i<marks.length;i++){
+                        var m=marks[i];
+                        var parent=m.parentNode;
+                        if(parent)parent.replaceChild(document.createTextNode(m.textContent),m);
+                    }
+                    window.__cosmicFind=null;
+                }
+                if(document.body)document.body.normalize();
+            })()"#,
+            |_| {},
+        );
+    }
+
+    /// Evaluate a JS snippet and map its result to `T`.
+    ///
+    /// The task resolves when Servo calls the evaluation callback. Script errors
+    /// or evaluation failures resolve to `T::default()`.
+    fn eval_js<T: Default + Send + 'static>(
+        &self,
+        script: String,
+        parse: impl FnOnce(JSValue) -> T + Send + 'static,
+    ) -> libcosmic::iced::Task<T> {
+        let (tx, rx) = async_channel::bounded::<T>(1);
+        self.webview.evaluate_javascript(
+            script,
+            move |result: Result<JSValue, JavaScriptEvaluationError>| {
+                let val = result.unwrap_or(JSValue::Null);
+                let _ = tx.try_send(parse(val));
+            },
+        );
+        libcosmic::iced::Task::future(async move { rx.recv().await.unwrap_or_default() })
+    }
+}
+
+/// Escape a Rust string for safe embedding in a JavaScript double-quoted string literal.
+fn escape_js(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
