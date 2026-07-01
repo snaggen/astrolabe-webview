@@ -174,8 +174,8 @@ impl GpuRenderingContext {
     #[cfg(target_os = "linux")]
     fn media_gl_handles(&self) -> Option<MediaGlHandles> {
         use servo::{MediaGlApi, MediaGlContext, MediaNativeDisplay};
-        use surfman::multi::connection::NativeConnection;
-        use surfman::multi::context::NativeContext;
+        use surfman::platform::generic::multi::connection::NativeConnection;
+        use surfman::platform::generic::multi::context::NativeContext;
 
         let device = self.device.borrow();
         let context = self.media_context.borrow();
