@@ -10,7 +10,7 @@ use servo::PermissionFeature;
 /// Returns `true` when two features are the same variant.
 ///
 /// `PermissionFeature` does not implement `PartialEq`, so this compares the
-/// discriminant (the [`PermissionFeature::ScreenWakeLock`] payload is ignored).
+/// discriminant.
 ///
 /// ```
 /// use cosmic_webview::{PermissionFeature, permission};
@@ -49,8 +49,7 @@ pub fn feature_key(feature: PermissionFeature) -> &'static str {
         PermissionFeature::BackgroundSync => "background_sync",
         PermissionFeature::Bluetooth => "bluetooth",
         PermissionFeature::PersistentStorage => "persistent_storage",
-        PermissionFeature::ScreenWakeLock(_) => "screen_wake_lock",
-        PermissionFeature::Gamepad => "gamepad",
+        PermissionFeature::ScreenWakeLock => "screen_wake_lock",
     }
 }
 
@@ -76,7 +75,6 @@ pub fn feature_label_from_key(key: &str) -> Option<&'static str> {
         "bluetooth" => "Bluetooth",
         "persistent_storage" => "Persistent storage",
         "screen_wake_lock" => "Screen wake lock",
-        "gamepad" => "Gamepad",
         _ => return None,
     };
     Some(label)

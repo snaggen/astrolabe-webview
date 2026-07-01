@@ -7,17 +7,17 @@ description = "Servo-based WebView widget for the COSMIC Desktop environment"
 license = "EUPL-1.2"
 
 [dependencies]
-# Web engine — servo 0.2.0 is not yet published on crates.io; pinned to a
-# specific commit 0.2.0. Switch to version = "0.2.0" in crates.io once published.
+# Web engine — servo is not published on crates.io; pinned to the v0.3.0 release
+# tag. Switch to version = "0.3.0" from crates.io once published.
 # media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
 # without it Servo silently falls back to a dummy backend that plays nothing.
 # bluetooth enables the Web Bluetooth DOM API; native-bluetooth adds the real
 # BLE backend (btleplug → BlueZ/D-Bus) instead of the mock used for tests.
-servo = { git = "https://github.com/servo/servo", rev = "bab0ee8a0089744df67837c4895989afedb4850c", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth"] }
+servo = { git = "https://github.com/servo/servo", tag = "v0.3.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
-# must be compatible with what servo 0.2.0 uses internally.
+# must be compatible with what servo 0.3.0 uses internally (surfman 0.12.x).
 surfman      = { version = "0.12", features = ["chains"] }
 gleam        = "0.15"
 glow         = "0.17.0"
