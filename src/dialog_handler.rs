@@ -1,6 +1,6 @@
 //! Ready-to-use handler for all interactive Servo dialog controls.
 //!
-//! Drop a [`DialogHandler`] into your application model and wire it up with
+//! Drop a `DialogHandler` into your application model and wire it up with
 //! three lines of code — the library takes care of all dialog UI and Servo
 //! response calls, including the OS file-picker (when the `xdg-portal` feature
 //! is enabled).
@@ -57,7 +57,8 @@ pub(crate) struct DialogHandler {
 
 /// Messages produced by the dialog UI.
 ///
-/// Wrap this in your own `Message` enum and forward to [`DialogHandler::update`].
+/// Wrap this in your own `Message` enum and forward to
+/// [`ServoState::update_dialog`](crate::ServoState::update_dialog).
 ///
 /// ```ignore
 /// enum Message {
@@ -82,7 +83,9 @@ pub enum DialogMsg {
     /// User cancelled the select dialog.
     SelectCancel,
     /// The OS file-picker dialog completed. Internal — produced by the async task
-    /// returned from [`DialogHandler::accept`]; forward to [`DialogHandler::update`].
+    /// returned from
+    /// [`ServoState::handle_dialog_control`](crate::ServoState::handle_dialog_control);
+    /// forward to [`ServoState::update_dialog`](crate::ServoState::update_dialog).
     FilePickerDone(Option<Vec<PathBuf>>),
 }
 

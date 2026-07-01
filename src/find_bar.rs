@@ -7,7 +7,7 @@ use libcosmic::widget;
 /// across re-renders (analogous to `URL_BAR_ID` in embedder applications).
 pub static FIND_BAR_ID: LazyLock<widget::Id> = LazyLock::new(|| widget::Id::new("find_bar_input"));
 
-/// The result of a [`ServoState::find`] operation.
+/// The result of a [`ServoState::find`](crate::ServoState::find) operation.
 #[derive(Clone, Debug, Default)]
 pub struct FindResult {
     /// Index of the current match (1-based). Zero when there are no matches.
@@ -19,8 +19,11 @@ pub struct FindResult {
 /// Persistent UI state for an in-page text search session.
 #[derive(Clone, Debug, Default)]
 pub struct FindBarState {
+    /// The current search query as typed by the user.
     pub query: String,
+    /// Whether `find_next`/`find_prev` wrap around at the ends of the match list.
     pub wrap: bool,
+    /// Whether matching is case-sensitive.
     pub case_sensitive: bool,
     /// The most recent result from a find or navigate call.
     pub result: FindResult,

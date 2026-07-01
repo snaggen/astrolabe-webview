@@ -14,7 +14,7 @@
 //! ```
 
 pub(crate) mod delegate;
-pub mod dialog_handler;
+pub(crate) mod dialog_handler;
 pub mod dialogs;
 pub mod find_bar;
 #[cfg(all(target_os = "linux", feature = "dmabuf"))]

@@ -251,6 +251,24 @@ impl KineticScroll {
 /// Servo. See [`WebViewWidget::shortcut_filter`].
 type ShortcutFilter<'a> = Box<dyn Fn(&keyboard::Key, keyboard::Modifiers) -> bool + 'a>;
 
+/// Read-only iced widget that displays the current Servo [`WebViewFrame`] and
+/// forwards mouse, keyboard, and scroll input to the engine.
+///
+/// Build it in `view()` from [`ServoState::frame`](crate::ServoState::frame),
+/// then attach callbacks with the builder methods.
+///
+/// # Example
+///
+/// ```no_run
+/// # use cosmic_webview::{InputEvent, ServoState, WebViewWidget};
+/// # enum Message { Input(InputEvent), Resized(u32, u32) }
+/// # fn view(state: &ServoState) -> WebViewWidget<'_, Message> {
+/// WebViewWidget::new(state.frame())
+///     .scale(1.0)
+///     .on_input(Message::Input)
+///     .on_resize(Message::Resized)
+/// # }
+/// ```
 pub struct WebViewWidget<'a, Message> {
     frame: &'a WebViewFrame,
     width: Length,
@@ -361,7 +379,8 @@ impl<'a, Message> WebViewWidget<'a, Message> {
         }
     }
 
-    /// Sets the current cursor shape as reported by [`ServoState::cursor`].
+    /// Sets the current cursor shape as reported by
+    /// [`ServoState::cursor`](crate::ServoState::cursor).
     ///
     /// Call this each frame so that the widget returns the correct
     /// [`mouse::Interaction`] when the page requests a non-default cursor
@@ -383,7 +402,7 @@ impl<'a, Message> WebViewWidget<'a, Message> {
     }
 
     /// Sets the URL of the hyperlink currently under the cursor, from
-    /// [`ServoState::hovered_link`].
+    /// [`ServoState::hovered_link`](crate::ServoState::hovered_link).
     ///
     /// Required for the middle-click / Ctrl+click "open in new tab" gesture
     /// registered with [`on_open_link`](Self::on_open_link).
@@ -408,7 +427,7 @@ impl<'a, Message> WebViewWidget<'a, Message> {
     ///
     /// The callback converts a Servo [`InputEvent`] into the app's `Message`
     /// type. The app should forward the event to Servo via
-    /// [`ServoState::send_input`].
+    /// [`ServoState::send_input`](crate::ServoState::send_input).
     pub fn on_input(mut self, f: impl Fn(InputEvent) -> Message + 'a) -> Self {
         self.on_input = Some(Box::new(f));
         self

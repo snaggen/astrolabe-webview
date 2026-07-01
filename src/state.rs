@@ -136,7 +136,7 @@ fn with_engine<R>(f: impl FnOnce(&servo::Servo) -> R) -> Option<R> {
 /// Site data categories that can be listed and cleared: cookies, `localStorage`,
 /// and `sessionStorage`. Servo's engine does not expose HTTP cache or IndexedDB
 /// clearing, so those are intentionally absent.
-pub fn all_storage_types() -> StorageType {
+pub(crate) fn all_storage_types() -> StorageType {
     StorageType::Cookies | StorageType::Local | StorageType::Session
 }
 
@@ -340,10 +340,12 @@ impl ServoState {
         self.servo.spin_event_loop();
     }
 
+    /// Loads `url` in this tab, replacing the current page.
     pub fn navigate(&self, url: Url) {
         self.webview.load(url);
     }
 
+    /// Resizes the WebView and its rendering context to `size` (physical pixels).
     pub fn resize(&self, size: PhysicalSize<u32>) {
         self.webview.resize(size);
         self.rendering_ctx.as_rc().resize(size);
@@ -358,14 +360,17 @@ impl ServoState {
         );
     }
 
+    /// Navigates back one entry in this tab's session history.
     pub fn go_back(&self) {
         self.webview.go_back(1);
     }
 
+    /// Navigates forward one entry in this tab's session history.
     pub fn go_forward(&self) {
         self.webview.go_forward(1);
     }
 
+    /// Reloads the current page.
     pub fn reload(&self) {
         self.webview.reload();
     }
@@ -384,6 +389,7 @@ impl ServoState {
         self.webview.page_zoom()
     }
 
+    /// Forwards a mouse or keyboard [`InputEvent`] to the page.
     pub fn send_input(&self, event: InputEvent) {
         self.webview.notify_input_event(event);
     }
@@ -425,6 +431,7 @@ impl ServoState {
         self.rendering_ctx.as_rc().read_to_image(rect)
     }
 
+    /// Returns the load status of the page currently loading or loaded in this tab.
     pub fn load_status(&self) -> LoadStatus {
         self.shared.load_status.get()
     }
@@ -435,6 +442,19 @@ impl ServoState {
     /// returns `true` when the request should be blocked. `resource_type` is
     /// the adblock resource-type string ("script", "image", "stylesheet", …).
     /// Pass `None` to disable filtering.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use cosmic_webview::ServoState;
+    /// # use std::sync::Arc;
+    /// # fn f(state: &ServoState) {
+    /// // Block all image requests.
+    /// state.set_content_filter(Some(Arc::new(|_url, resource_type, _source| {
+    ///     resource_type == "image"
+    /// })));
+    /// # }
+    /// ```
     pub fn set_content_filter(&self, filter: Option<ContentFilterFn>) {
         *self.shared.content_filter.lock().unwrap() = filter;
     }
@@ -554,6 +574,10 @@ impl ServoState {
     /// highlight the current match in orange, and scroll it into view.
     ///
     /// Returns a [`FindResult`] with `total` and `current = 1` (or both zero).
+    ///
+    /// `wrap` is ignored here (a fresh search always lands on the first match);
+    /// it applies only to [`find_next`](Self::find_next) and
+    /// [`find_prev`](Self::find_prev).
     ///
     /// Uses DOM mutation (`<mark>` elements + injected CSS) rather than
     /// `window.find()` (absent in Servo) or `Selection` (not rendered visually
@@ -679,7 +703,7 @@ impl ServoState {
 
     /// Navigate to the previous match in the page.
     ///
-    /// Like [`find_next`] but searches backwards. Returns the new 1-based
+    /// Like [`find_next`](Self::find_next) but searches backwards. Returns the new 1-based
     /// current index, or `0` if there are no matches.
     pub fn find_prev(&self, wrap: bool) -> libcosmic::iced::Task<usize> {
         let script = format!(

@@ -17,8 +17,8 @@
 //! Frames written by the engine readback path are stored **bottom-up** exactly
 //! as OpenGL produces them; the vertical flip happens for free in the vertex
 //! shader. Frames fed through [`WebViewFrame::update`] are top-down (normal
-//! image order). The orientation travels with the pixels via
-//! [`FrameInner::bottom_up`] and selects the matching render pipeline.
+//! image order). The orientation travels with the pixels internally and
+//! selects the matching render pipeline.
 
 use std::sync::{
     Arc,
@@ -49,7 +49,7 @@ pub(crate) struct FrameInner {
 }
 
 /// Shared pixel buffer and upload flag, held by the application state and
-/// referenced by [`WebViewPrimitive`] on every draw.
+/// referenced by the internal render primitive on every draw.
 ///
 /// # Example
 ///
@@ -98,7 +98,7 @@ impl WebViewFrame {
     /// for upload.
     ///
     /// This is the manual feeding path; the engine fills the frame directly
-    /// through its [`FrameSink`] without this extra copy.
+    /// through its internal frame sink without this extra copy.
     pub fn update(&self, width: u32, height: u32, rgba: &[u8]) {
         // Update pixels and dimensions atomically under a single lock to prevent
         // a consumer from reading new pixels with the old size (or vice versa).
