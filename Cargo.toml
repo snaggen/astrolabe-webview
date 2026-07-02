@@ -23,8 +23,8 @@ gleam        = "0.15"
 glow         = "0.17.0"
 
 # UI toolkit (not yet on crates.io) — wgpu is always required for GPU frame rendering
-libcosmic    = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", features = ["wgpu"] }
-iced_wgpu    = { git = "https://github.com/pop-os/libcosmic" }
+libcosmic    = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", rev = "18a7a75e3316b1f4855777af677d989467f2da74", features = ["wgpu"] }
+iced_wgpu    = { git = "https://github.com/pop-os/libcosmic", rev = "18a7a75e3316b1f4855777af677d989467f2da74" }
 
 # Event loop waker channel — Send + Sync + Clone, suitable for crossing the
 # Servo/iced boundary without requiring Servo to be Send.
