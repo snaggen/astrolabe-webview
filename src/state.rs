@@ -456,6 +456,17 @@ impl ServoState {
         self.shared.load_status.get()
     }
 
+    /// Whether the page has active animations (CSS transitions/animations or
+    /// `requestAnimationFrame` callbacks) and therefore needs the event loop
+    /// spun at the display refresh rate to advance them.
+    ///
+    /// Drive a `libcosmic::iced::window::frames` subscription with this so a
+    /// foreground animating tab is clocked at vsync rather than as fast as the
+    /// CPU allows.
+    pub fn animating(&self) -> bool {
+        self.webview.animating()
+    }
+
     /// Install or remove a content filter for this tab.
     ///
     /// The closure receives `(request_url, resource_type, source_url)` and
