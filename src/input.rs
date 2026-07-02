@@ -160,6 +160,29 @@ pub(crate) fn keyboard_event_to_servo(event: &keyboard::Event) -> Option<InputEv
     }
 }
 
+/// Whether `event` is a press or release of a bare modifier key
+/// (Control/Shift/Alt/Super), as opposed to a character or other key.
+///
+/// Used to forward *only* modifier state — never typed content — when keeping
+/// the engine's global keyboard-modifier state in sync from a window-level
+/// listener, so that a modifier release is not missed when a non-webview page is
+/// shown.
+pub(crate) fn is_bare_modifier_key(event: &keyboard::Event) -> bool {
+    let key = match event {
+        keyboard::Event::KeyPressed { key, .. } | keyboard::Event::KeyReleased { key, .. } => key,
+        keyboard::Event::ModifiersChanged(_) => return false,
+    };
+    matches!(
+        key,
+        keyboard::Key::Named(
+            keyboard::key::Named::Control
+                | keyboard::key::Named::Shift
+                | keyboard::key::Named::Alt
+                | keyboard::key::Named::Super
+        )
+    )
+}
+
 /// Converts an iced logical [`Key`] to the `keyboard_types` equivalent.
 ///
 /// Both iced and `keyboard_types` follow the W3C UI Events spec, so named key

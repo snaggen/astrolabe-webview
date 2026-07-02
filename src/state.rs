@@ -470,6 +470,24 @@ impl ServoState {
         self.webview.notify_input_event(event);
     }
 
+    /// Forwards a keyboard event to the engine **only if it is a bare modifier
+    /// key** (Control/Shift/Alt/Super); any other key is ignored.
+    ///
+    /// The engine tracks a single global keyboard-modifier state (used e.g. for
+    /// its built-in Ctrl+click "open in new tab"). Feed this from a window-level
+    /// key listener so a modifier release is not missed when a non-webview page
+    /// is shown — otherwise the modifier sticks and ordinary clicks are treated
+    /// as Ctrl+click. Because only modifier keys pass through, this never
+    /// forwards typed content and cannot leak keystrokes; route real input
+    /// through [`crate::WebViewWidget`], which gates it to the focused page.
+    pub fn send_modifier_key(&self, event: &libcosmic::iced::keyboard::Event) {
+        if crate::input::is_bare_modifier_key(event)
+            && let Some(input_event) = crate::input::keyboard_event_to_servo(event)
+        {
+            self.webview.notify_input_event(input_event);
+        }
+    }
+
     /// Returns the shared frame buffer for this tab.
     ///
     /// Pass it to [`crate::WebViewWidget::new`] in `view()`. The engine fills

@@ -24,9 +24,6 @@ use crate::primitive::{WebViewFrame, WebViewPrimitive};
 struct WebViewState {
     last_phys_size: (u32, u32),
     kinetic: KineticScroll,
-    /// Whether Ctrl is currently held, tracked from keyboard events so the
-    /// widget can recognise the Ctrl+click "open in new tab" gesture.
-    ctrl_held: bool,
     /// Button whose release must be dropped because its press opened a link in
     /// a new tab (so the click never reaches Servo as a navigation/autoscroll).
     swallow_release: Option<mouse::Button>,
@@ -284,7 +281,7 @@ pub struct WebViewWidget<'a, Message> {
     /// which that wrapper would otherwise swallow) on conversion to `Element`.
     context_menu: Option<Vec<menu::Tree<Message>>>,
     /// URL of the hyperlink under the cursor, from [`ServoState::hovered_link`].
-    /// Required for the middle-click / Ctrl+click "open in new tab" gesture.
+    /// Required for the middle-click "open in new tab" gesture.
     hovered_link: Option<String>,
     /// Fired with `(physical_width, physical_height)` when the widget's layout
     /// size changes. Use this to call [`ServoState::resize`] with exact bounds
@@ -531,20 +528,6 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
         let scale = self.scale;
         let wstate = state.state.downcast_mut::<WebViewState>();
 
-        // Track Ctrl so the Ctrl+click "open in new tab" gesture is recognised.
-        match event {
-            Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
-                wstate.ctrl_held = m.control();
-            }
-            Event::Keyboard(
-                keyboard::Event::KeyPressed { modifiers, .. }
-                | keyboard::Event::KeyReleased { modifiers, .. },
-            ) => {
-                wstate.ctrl_held = modifiers.control();
-            }
-            _ => {}
-        }
-
         // Notify the embedder when the widget's physical size changes so
         // Servo renders at the exact widget resolution, not the full window size.
         if let Some(on_resize) = &self.on_resize {
@@ -597,15 +580,17 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
             shell.request_redraw();
         }
 
-        // Middle-click or Ctrl+left-click on a link opens it in a new tab. The
-        // press is consumed (and its release dropped) so Servo does not also
-        // navigate the current page or start middle-button autoscroll.
+        // Middle-click on a link opens it in a new tab. The press is consumed
+        // (and its release dropped) so Servo does not also navigate the current
+        // page or start middle-button autoscroll.
         if let Event::Mouse(mouse::Event::ButtonPressed(button)) = event
             && let Some(on_open_link) = &self.on_open_link
             && cursor.is_over(bounds)
         {
-            let new_tab_gesture = matches!(button, mouse::Button::Middle)
-                || (matches!(button, mouse::Button::Left) && wstate.ctrl_held);
+            // Only middle-click opens a link in a new tab here. Ctrl+click is
+            // handled by the engine itself (it treats the link as target=_blank),
+            // so duplicating it would open two tabs.
+            let new_tab_gesture = matches!(button, mouse::Button::Middle);
             if new_tab_gesture && let Some(url) = &self.hovered_link {
                 shell.publish(on_open_link(url.clone()));
                 wstate.swallow_release = Some(*button);
@@ -625,7 +610,14 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
                 let pos_in_bounds = cursor.position_in(bounds);
                 input::mouse_event_to_servo(me, pos_in_bounds, scale)
             }
-            Event::Keyboard(ke) if self.keyboard_enabled && !self.is_host_shortcut(ke) => {
+            // Bare modifier keys are forwarded at the window level (see
+            // `ServoState::send_modifier_key`) so a release is never missed while
+            // this widget is off-screen; forwarding them here too would double them.
+            Event::Keyboard(ke)
+                if self.keyboard_enabled
+                    && !self.is_host_shortcut(ke)
+                    && !input::is_bare_modifier_key(ke) =>
+            {
                 input::keyboard_event_to_servo(ke)
             }
             _ => None,
