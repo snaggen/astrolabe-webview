@@ -34,7 +34,7 @@ pub use find_bar::{FIND_BAR_ID, FindBar, FindBarMsg, FindBarState, FindResult};
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::{
-    ServoState, WebFonts, clear_all_cookies, clear_site_data, list_site_data,
+    ServoState, ThemePreference, WebFonts, clear_all_cookies, clear_site_data, list_site_data,
     set_camera_microphone_enabled, set_devtools_enabled, set_profile_dir, set_web_fonts,
     shutdown_engine,
 };

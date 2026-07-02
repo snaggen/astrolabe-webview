@@ -64,6 +64,42 @@ impl Default for WebFonts {
     }
 }
 
+/// How web content's `prefers-color-scheme` should be chosen.
+///
+/// Pass this to [`ServoState::set_theme_preference`]. `FollowSystem` resolves to
+/// the current COSMIC desktop light/dark setting; `Light` and `Dark` force a
+/// fixed appearance regardless of the desktop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemePreference {
+    /// Follow the COSMIC desktop light/dark setting (the default).
+    #[default]
+    FollowSystem,
+    /// Always report a light theme to web content.
+    Light,
+    /// Always report a dark theme to web content.
+    Dark,
+}
+
+impl ThemePreference {
+    /// Resolve to the concrete [`Theme`] to report to web content.
+    ///
+    /// `FollowSystem` reads the current COSMIC desktop theme via
+    /// [`libcosmic::theme::active`]; `Light`/`Dark` map directly.
+    pub fn resolve(self) -> Theme {
+        match self {
+            ThemePreference::Light => Theme::Light,
+            ThemePreference::Dark => Theme::Dark,
+            ThemePreference::FollowSystem => {
+                if libcosmic::theme::active().cosmic().is_dark {
+                    Theme::Dark
+                } else {
+                    Theme::Light
+                }
+            }
+        }
+    }
+}
+
 /// Configure the default fonts used to render web content.
 ///
 /// Call before the first [`ServoState::new`] to apply from the first page load;
@@ -378,6 +414,26 @@ impl ServoState {
     /// ```
     pub fn set_theme(&self, theme: Theme) {
         self.webview.notify_theme_change(theme);
+    }
+
+    /// Sets the theme reported to web content from a [`ThemePreference`],
+    /// resolving `FollowSystem` against the current COSMIC desktop theme.
+    ///
+    /// Prefer this over [`ServoState::set_theme`] when the embedder exposes a
+    /// light/dark/follow-system choice. Call it again when the desktop theme
+    /// changes (while `FollowSystem`) so pages keep following it.
+    ///
+    /// ```no_run
+    /// use cosmic_webview::{ServoState, ThemePreference};
+    /// use url::Url;
+    /// use dpi::PhysicalSize;
+    ///
+    /// let url = Url::parse("https://example.com").unwrap();
+    /// let (state, _rx) = ServoState::new(url, PhysicalSize::new(800_u32, 600), 1.0);
+    /// state.set_theme_preference(ThemePreference::FollowSystem);
+    /// ```
+    pub fn set_theme_preference(&self, preference: ThemePreference) {
+        self.set_theme(preference.resolve());
     }
 
     /// Navigates back one entry in this tab's session history.
@@ -853,6 +909,25 @@ mod tests {
 
     use super::*;
     use crate::rendering::ActiveRenderingContext;
+
+    #[test]
+    fn theme_preference_resolves_explicit_choices() {
+        assert_eq!(ThemePreference::Light.resolve(), Theme::Light);
+        assert_eq!(ThemePreference::Dark.resolve(), Theme::Dark);
+    }
+
+    #[test]
+    fn theme_preference_follow_system_resolves_without_panicking() {
+        // Depends on the ambient desktop theme; assert only that it resolves to a
+        // valid variant rather than hard-coding light or dark.
+        let theme = ThemePreference::FollowSystem.resolve();
+        assert!(matches!(theme, Theme::Light | Theme::Dark));
+    }
+
+    #[test]
+    fn theme_preference_defaults_to_follow_system() {
+        assert_eq!(ThemePreference::default(), ThemePreference::FollowSystem);
+    }
 
     #[test]
     fn loads_about_blank() {
