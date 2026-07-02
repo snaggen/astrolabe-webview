@@ -545,6 +545,35 @@ impl ServoState {
         self.shared.pending_bluetooth.borrow_mut().take()
     }
 
+    /// Takes the next WebView the engine opened for the embedder — via
+    /// `window.open()`, a `target="_blank"` link, or a Ctrl/middle-click that
+    /// Servo routes through the engine — as a ready-to-use tab.
+    ///
+    /// Returns one [`ServoState`] per call in FIFO order; call it in a loop until
+    /// it yields `None`. Each returned state shares the process-wide engine and
+    /// owns its own rendering context and frame buffer, exactly like one from
+    /// [`ServoState::new`]. Drop the returned state to reject the popup.
+    ///
+    /// The new page's URL is not known synchronously; read it from
+    /// [`ServoState::current_url`] once the engine reports it.
+    pub fn take_pending_new_tab(&self) -> Option<ServoState> {
+        let pending = {
+            let mut queue = self.shared.pending_new_tabs.borrow_mut();
+            if queue.is_empty() {
+                return None;
+            }
+            queue.remove(0)
+        };
+        Some(ServoState {
+            servo: self.servo.clone(),
+            webview: pending.webview,
+            rendering_ctx: pending.rendering_ctx,
+            frame: pending.frame,
+            shared: pending.shared,
+            dialog_handler: DialogHandler::new(),
+        })
+    }
+
     /// Returns the current cursor shape as last reported by the page.
     pub fn cursor(&self) -> Cursor {
         self.shared.cursor.get()

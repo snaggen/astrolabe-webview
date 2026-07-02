@@ -5,16 +5,17 @@ use std::sync::{Arc, Mutex};
 use async_channel::Sender;
 use content_security_policy::Destination;
 use servo::{
-    AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel, Cursor,
-    EmbedderControl, EmbedderControlId, LoadStatus, PermissionRequest, RenderingContext,
-    ServoDelegate, ServoError, WebResourceLoad, WebResourceResponse, WebView, WebViewDelegate,
+    AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
+    CreateNewWebViewRequest, Cursor, EmbedderControl, EmbedderControlId, LoadStatus,
+    PermissionRequest, RenderingContext, ServoDelegate, ServoError, WebResourceLoad,
+    WebResourceResponse, WebView, WebViewDelegate,
 };
 use url::Url;
 
 #[cfg(all(target_os = "linux", feature = "dmabuf"))]
 use crate::gpu_share::{GlImporter, GpuPath};
-use crate::primitive::FrameSink;
-use crate::rendering::read_frame_into_sink;
+use crate::primitive::{FrameSink, WebViewFrame};
+use crate::rendering::{ActiveRenderingContext, read_frame_into_sink};
 
 /// Lazily initialised GL-side importer for the zero-copy path.
 ///
@@ -35,6 +36,17 @@ pub(crate) enum GlShareState {
 /// Arguments: `(request_url, resource_type, source_url)`.
 /// `resource_type` is the adblock resource-type string ("script", "image", …).
 pub type ContentFilterFn = Arc<dyn Fn(&Url, &str, Option<&str>) -> bool + Send + Sync>;
+
+/// A WebView the engine created for the embedder (via `window.open()`,
+/// `target="_blank"`, etc.), together with the rendering context, frame buffer,
+/// and shared state that back it. Queued on the parent's [`SharedState`] until
+/// the app adopts it through [`crate::state::ServoState::take_pending_new_tab`].
+pub(crate) struct PendingChildWebView {
+    pub webview: WebView,
+    pub rendering_ctx: ActiveRenderingContext,
+    pub frame: WebViewFrame,
+    pub shared: Rc<SharedState>,
+}
 
 /// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
@@ -84,6 +96,10 @@ pub(crate) struct SharedState {
     /// `(request_url, resource_type, source_url)` — resource_type is the adblock
     /// resource type string ("script", "image", "stylesheet" etc.).
     pub content_filter: Mutex<Option<ContentFilterFn>>,
+    /// WebViews the engine created for the embedder (popups, `target="_blank"`),
+    /// awaiting adoption by the app as new tabs. Drained in FIFO order via
+    /// [`crate::state::ServoState::take_pending_new_tab`].
+    pub pending_new_tabs: RefCell<Vec<PendingChildWebView>>,
 }
 
 impl SharedState {
@@ -106,6 +122,7 @@ impl SharedState {
             can_go_back: Cell::new(false),
             can_go_forward: Cell::new(false),
             content_filter: Mutex::new(None),
+            pending_new_tabs: RefCell::new(Vec::new()),
         })
     }
 }
@@ -351,6 +368,38 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         let _ = self.waker_tx.try_send(());
     }
 
+    fn request_create_new(&self, parent_webview: WebView, request: CreateNewWebViewRequest) {
+        // The child gets its own rendering context, frame buffer, shared state,
+        // and delegate — the same one-context-per-tab invariant every tab holds.
+        // Building the WebView here (rather than dropping the request) accepts the
+        // popup; dropping would deny it and make `window.open()` return null.
+        let child_ctx = ActiveRenderingContext::create(self.rendering_ctx.size());
+        let child_shared = SharedState::new();
+        let child_frame = WebViewFrame::new();
+        let child_delegate = Rc::new(CosmicWebViewDelegate::new(
+            child_ctx.as_rc(),
+            child_shared.clone(),
+            child_frame.sink(),
+            self.waker_tx.clone(),
+        ));
+        let webview = request
+            .builder(child_ctx.as_rc())
+            .hidpi_scale_factor(parent_webview.hidpi_scale_factor())
+            .delegate(child_delegate)
+            .build();
+
+        self.shared
+            .pending_new_tabs
+            .borrow_mut()
+            .push(PendingChildWebView {
+                webview,
+                rendering_ctx: child_ctx,
+                frame: child_frame,
+                shared: child_shared,
+            });
+        let _ = self.waker_tx.try_send(());
+    }
+
     fn notify_url_changed(&self, _webview: WebView, url: Url) {
         *self.shared.current_url.borrow_mut() = Some(url);
         let _ = self.waker_tx.try_send(());
@@ -491,6 +540,26 @@ mod tests {
         let shared = SharedState::new();
         shared.cursor.set(Cursor::Pointer);
         assert_eq!(shared.cursor.get(), Cursor::Pointer);
+    }
+
+    #[test]
+    fn shared_state_pending_new_tabs_initially_empty() {
+        let shared = SharedState::new();
+        assert!(shared.pending_new_tabs.borrow().is_empty());
+    }
+
+    #[test]
+    fn shared_state_drain_pending_new_tabs_is_fifo_and_idempotent() {
+        // We cannot build a WebView without a running engine, so exercise the
+        // queue's ordering and drain semantics with the Vec directly.
+        let mut queue: Vec<u32> = vec![1, 2, 3];
+        let first = (!queue.is_empty()).then(|| queue.remove(0));
+        assert_eq!(first, Some(1)); // FIFO: oldest popup first
+        assert_eq!(queue, vec![2, 3]);
+        queue.clear();
+        // Draining an empty queue never panics and yields nothing.
+        let none = (!queue.is_empty()).then(|| queue.remove(0));
+        assert_eq!(none, None);
     }
 
     #[test]

@@ -237,6 +237,15 @@ impl libcosmic::Application for Browser {
             Message::ServoWake => {
                 self.servo.spin();
 
+                // Demonstrate request_create_new: window.open() and target="_blank"
+                // produce a new engine WebView. A real browser adds a tab; this
+                // minimal example swaps the visible webview to the newest popup so
+                // the adopted WebView can be seen rendering.
+                if let Some(new_tab) = self.servo.take_pending_new_tab() {
+                    tracing::info!("Adopted a new WebView from window.open()/target=_blank");
+                    self.servo = new_tab;
+                }
+
                 // Pick up context-sensitive menu items from Servo. These arrive
                 // one frame after the right-click. The context_menu overlay reads
                 // items on every render, so the popup updates automatically.
