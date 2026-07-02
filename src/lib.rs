@@ -46,5 +46,5 @@ pub use widget::{WebViewWidget, cursor_interaction};
 pub use servo::{
     BluetoothDeviceDescription, BluetoothDeviceSelectionRequest, ContextMenu, ContextMenuAction,
     ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent, LoadStatus,
-    PermissionFeature, PermissionRequest, SiteData,
+    PermissionFeature, PermissionRequest, SiteData, Theme,
 };

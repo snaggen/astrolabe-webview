@@ -8,7 +8,7 @@ use servo::{
     AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor, DeviceIndependentPixel,
     DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError,
     LoadStatus, Opts, PermissionRequest, PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData,
-    StorageType, WebViewBuilder,
+    StorageType, Theme, WebViewBuilder,
 };
 use url::Url;
 
@@ -358,6 +358,26 @@ impl ServoState {
         self.webview.set_hidpi_scale_factor(
             Scale::<f32, DeviceIndependentPixel, DevicePixel>::new(factor),
         );
+    }
+
+    /// Sets the theme reported to web content, controlling the CSS
+    /// `prefers-color-scheme` media feature (light vs. dark).
+    ///
+    /// Call this when the desktop switches between light and dark so pages that
+    /// adapt their colors follow the system. New pages loaded afterwards inherit
+    /// the last value set.
+    ///
+    /// ```no_run
+    /// use cosmic_webview::{ServoState, Theme};
+    /// use url::Url;
+    /// use dpi::PhysicalSize;
+    ///
+    /// let url = Url::parse("https://example.com").unwrap();
+    /// let (state, _rx) = ServoState::new(url, PhysicalSize::new(800_u32, 600), 1.0);
+    /// state.set_theme(Theme::Dark);
+    /// ```
+    pub fn set_theme(&self, theme: Theme) {
+        self.webview.notify_theme_change(theme);
     }
 
     /// Navigates back one entry in this tab's session history.
