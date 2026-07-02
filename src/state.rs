@@ -641,6 +641,18 @@ impl ServoState {
         })
     }
 
+    /// Takes the favicon the engine last reported for the page, if a new one has
+    /// arrived since the previous call.
+    ///
+    /// The engine resolves `<link rel="icon">` (including SVG and `data:` URIs)
+    /// and the default location, so this is more accurate than fetching
+    /// `/favicon.ico`. Returns an [`RgbaImage`]; `None` when nothing new is
+    /// pending. Prefer this over a network fetch and fall back to fetching only
+    /// when the engine never reports one.
+    pub fn take_favicon(&self) -> Option<RgbaImage> {
+        self.shared.pending_favicon.borrow_mut().take()
+    }
+
     /// Returns the current cursor shape as last reported by the page.
     pub fn cursor(&self) -> Cursor {
         self.shared.cursor.get()

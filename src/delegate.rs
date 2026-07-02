@@ -6,9 +6,9 @@ use async_channel::Sender;
 use content_security_policy::Destination;
 use servo::{
     AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
-    CreateNewWebViewRequest, Cursor, EmbedderControl, EmbedderControlId, LoadStatus,
-    PermissionRequest, RenderingContext, ServoDelegate, ServoError, WebResourceLoad,
-    WebResourceResponse, WebView, WebViewDelegate,
+    CreateNewWebViewRequest, Cursor, EmbedderControl, EmbedderControlId, Image, LoadStatus,
+    PermissionRequest, PixelFormat, RenderingContext, RgbaImage, ServoDelegate, ServoError,
+    WebResourceLoad, WebResourceResponse, WebView, WebViewDelegate,
 };
 use url::Url;
 
@@ -100,6 +100,10 @@ pub(crate) struct SharedState {
     /// awaiting adoption by the app as new tabs. Drained in FIFO order via
     /// [`crate::state::ServoState::take_pending_new_tab`].
     pub pending_new_tabs: RefCell<Vec<PendingChildWebView>>,
+    /// Latest favicon the engine reported for the page (from `<link rel="icon">`
+    /// or the default location), decoded to RGBA. Drained via
+    /// [`crate::state::ServoState::take_favicon`].
+    pub pending_favicon: RefCell<Option<RgbaImage>>,
 }
 
 impl SharedState {
@@ -123,6 +127,7 @@ impl SharedState {
             can_go_forward: Cell::new(false),
             content_filter: Mutex::new(None),
             pending_new_tabs: RefCell::new(Vec::new()),
+            pending_favicon: RefCell::new(None),
         })
     }
 }
@@ -418,6 +423,14 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         let _ = self.waker_tx.try_send(());
     }
 
+    fn notify_favicon_changed(&self, webview: WebView) {
+        // The engine resolves <link rel="icon"> (including SVG and data: URIs) and
+        // the default location, so this is more accurate than fetching /favicon.ico.
+        let rgba = webview.favicon().as_deref().and_then(favicon_to_rgba);
+        *self.shared.pending_favicon.borrow_mut() = rgba;
+        let _ = self.waker_tx.try_send(());
+    }
+
     fn notify_history_changed(&self, _webview: WebView, entries: Vec<Url>, current: usize) {
         self.shared.can_go_back.set(current > 0);
         self.shared.can_go_forward.set(current + 1 < entries.len());
@@ -471,6 +484,34 @@ impl ServoDelegate for CosmicServoDelegate {
     fn notify_error(&self, error: ServoError) {
         tracing::error!("Servo engine error: {error:?}");
     }
+}
+
+/// Converts an engine [`Image`] favicon to an [`RgbaImage`].
+fn favicon_to_rgba(image: &Image) -> Option<RgbaImage> {
+    convert_pixels(image.width, image.height, image.format, image.data())
+}
+
+/// Normalises a pixel buffer of any [`PixelFormat`] to RGBA8 and wraps it in an
+/// [`RgbaImage`]. Returns `None` if the dimensions and buffer length disagree
+/// (a malformed image).
+fn convert_pixels(width: u32, height: u32, format: PixelFormat, data: &[u8]) -> Option<RgbaImage> {
+    let rgba: Vec<u8> = match format {
+        PixelFormat::K8 => data.iter().flat_map(|&v| [v, v, v, 255]).collect(),
+        PixelFormat::KA8 => data
+            .chunks_exact(2)
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
+        PixelFormat::RGB8 => data
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        PixelFormat::RGBA8 => data.to_vec(),
+        PixelFormat::BGRA8 => data
+            .chunks_exact(4)
+            .flat_map(|p| [p[2], p[1], p[0], p[3]])
+            .collect(),
+    };
+    RgbaImage::from_raw(width, height, rgba)
 }
 
 /// Maps a CSP `Destination` to the resource-type string expected by the
@@ -548,6 +589,37 @@ mod tests {
         let shared = SharedState::new();
         shared.cursor.set(Cursor::Pointer);
         assert_eq!(shared.cursor.get(), Cursor::Pointer);
+    }
+
+    #[test]
+    fn convert_pixels_rgba8_passes_through() {
+        let src = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let img = convert_pixels(2, 1, PixelFormat::RGBA8, &src).expect("valid");
+        assert_eq!(img.as_raw(), &src);
+    }
+
+    #[test]
+    fn convert_pixels_rgb8_adds_opaque_alpha() {
+        let img = convert_pixels(1, 1, PixelFormat::RGB8, &[10, 20, 30]).expect("valid");
+        assert_eq!(img.as_raw(), &[10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn convert_pixels_k8_expands_to_opaque_gray() {
+        let img = convert_pixels(2, 1, PixelFormat::K8, &[7, 9]).expect("valid");
+        assert_eq!(img.as_raw(), &[7, 7, 7, 255, 9, 9, 9, 255]);
+    }
+
+    #[test]
+    fn convert_pixels_bgra8_swaps_red_and_blue() {
+        let img = convert_pixels(1, 1, PixelFormat::BGRA8, &[30, 20, 10, 128]).expect("valid");
+        assert_eq!(img.as_raw(), &[10, 20, 30, 128]);
+    }
+
+    #[test]
+    fn convert_pixels_rejects_size_mismatch() {
+        // 2x2 needs 16 RGBA bytes; only 4 provided.
+        assert!(convert_pixels(2, 2, PixelFormat::RGBA8, &[0, 0, 0, 255]).is_none());
     }
 
     #[test]
