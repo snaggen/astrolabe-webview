@@ -291,12 +291,18 @@ impl WebViewDelegate for CosmicWebViewDelegate {
                     .frame_generation
                     .set(self.shared.frame_generation.get().wrapping_add(1));
             }
+            let _ = self.waker_tx.try_send(());
         } else {
             // Hidden tab: skip compositing and readback entirely; remember
             // that content changed so set_visible(true) can catch up.
+            //
+            // Do NOT wake the UI loop here. Servo re-emits frame-ready for the
+            // unpainted background frame on every spin, so waking would drive a
+            // spin→frame-ready→wake storm that pegs the CPU and starves input.
+            // Genuine background progress (network, timers) still wakes the loop
+            // through Servo's own EventLoopWaker.
             self.shared.frame_pending.set(true);
         }
-        let _ = self.waker_tx.try_send(());
     }
 
     fn notify_load_status_changed(&self, _webview: WebView, status: LoadStatus) {
