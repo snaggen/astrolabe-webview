@@ -45,6 +45,7 @@ pub use widget::{WebViewWidget, cursor_interaction};
 // This removes the need for embedders to add servo as a direct dependency.
 pub use servo::{
     BluetoothDeviceDescription, BluetoothDeviceSelectionRequest, ContextMenu, ContextMenuAction,
-    ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent, LoadStatus,
-    PermissionFeature, PermissionRequest, SiteData, Theme,
+    ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent, LoadStatus, MediaMetadata,
+    MediaPositionState, MediaSessionActionType, MediaSessionPlaybackState, PermissionFeature,
+    PermissionRequest, SiteData, Theme,
 };

@@ -7,8 +7,9 @@ use euclid::Scale;
 use servo::{
     AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor, DeviceIndependentPixel,
     DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError,
-    LoadStatus, Opts, PermissionRequest, PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData,
-    StorageType, Theme, WebViewBuilder,
+    LoadStatus, MediaMetadata, MediaPositionState, MediaSessionActionType,
+    MediaSessionPlaybackState, Opts, PermissionRequest, PrefValue, Preferences, RgbaImage,
+    ServoBuilder, SiteData, StorageType, Theme, WebViewBuilder,
 };
 use url::Url;
 
@@ -679,6 +680,36 @@ impl ServoState {
     /// to close the last remaining one.
     pub fn take_closed(&self) -> bool {
         self.shared.closed.replace(false)
+    }
+
+    /// Returns a counter that increases on every Media Session event.
+    ///
+    /// The Media Session state types do not implement `PartialEq`, so compare
+    /// this value against a stored one to detect when metadata, playback state,
+    /// or position have changed and system media controls need refreshing.
+    pub fn media_generation(&self) -> u64 {
+        self.shared.media_generation.get()
+    }
+
+    /// Returns the page's latest Media Session metadata (title/artist/album).
+    pub fn media_metadata(&self) -> Option<MediaMetadata> {
+        self.shared.media_metadata.borrow().clone()
+    }
+
+    /// Returns the page's latest Media Session playback state.
+    pub fn media_playback_state(&self) -> Option<MediaSessionPlaybackState> {
+        self.shared.media_playback.borrow().clone()
+    }
+
+    /// Returns the page's latest Media Session position state.
+    pub fn media_position(&self) -> Option<MediaPositionState> {
+        self.shared.media_position.borrow().clone()
+    }
+
+    /// Sends a Media Session action (play/pause/seek/next/prev/…) to the page,
+    /// e.g. in response to a hardware media key or a system media control.
+    pub fn send_media_action(&self, action: MediaSessionActionType) {
+        self.webview.notify_media_session_action_event(action);
     }
 
     /// Returns the current cursor shape as last reported by the page.

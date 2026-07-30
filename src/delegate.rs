@@ -7,6 +7,7 @@ use content_security_policy::Destination;
 use servo::{
     AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
     CreateNewWebViewRequest, Cursor, EmbedderControl, EmbedderControlId, Image, LoadStatus,
+    MediaMetadata, MediaPositionState, MediaSessionEvent, MediaSessionPlaybackState,
     PermissionRequest, PixelFormat, RenderingContext, RgbaImage, ServoDelegate, ServoError,
     WebResourceLoad, WebResourceResponse, WebView, WebViewDelegate,
 };
@@ -108,6 +109,17 @@ pub(crate) struct SharedState {
     /// once via [`crate::state::ServoState::take_closed`]; the app then removes
     /// the tab.
     pub closed: Cell<bool>,
+    /// Latest Media Session metadata (title/artist/album) reported by the page.
+    pub media_metadata: RefCell<Option<MediaMetadata>>,
+    /// Latest Media Session playback state (playing/paused/none).
+    pub media_playback: RefCell<Option<MediaSessionPlaybackState>>,
+    /// Latest Media Session position state (duration/rate/position).
+    pub media_position: RefCell<Option<MediaPositionState>>,
+    /// Bumped on every media-session event so the app can detect changes; the
+    /// media types do not implement `PartialEq`, so a generation counter is the
+    /// simplest change signal. Read via
+    /// [`crate::state::ServoState::media_generation`].
+    pub media_generation: Cell<u64>,
 }
 
 impl SharedState {
@@ -133,6 +145,10 @@ impl SharedState {
             pending_new_tabs: RefCell::new(Vec::new()),
             pending_favicon: RefCell::new(None),
             closed: Cell::new(false),
+            media_metadata: RefCell::new(None),
+            media_playback: RefCell::new(None),
+            media_position: RefCell::new(None),
+            media_generation: Cell::new(0),
         })
     }
 }
@@ -440,6 +456,26 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         // Page content called window.close(). Record it and wake the app so it
         // can drain the flag via `take_closed` and remove the tab.
         self.shared.closed.set(true);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_media_session_event(&self, _webview: WebView, event: MediaSessionEvent) {
+        // Store the latest value for whichever field the event carries; the app
+        // reads them to drive system media controls (MPRIS).
+        match event {
+            MediaSessionEvent::SetMetadata(metadata) => {
+                *self.shared.media_metadata.borrow_mut() = Some(metadata);
+            }
+            MediaSessionEvent::PlaybackStateChange(state) => {
+                *self.shared.media_playback.borrow_mut() = Some(state);
+            }
+            MediaSessionEvent::SetPositionState(position) => {
+                *self.shared.media_position.borrow_mut() = Some(position);
+            }
+        }
+        self.shared
+            .media_generation
+            .set(self.shared.media_generation.get().wrapping_add(1));
         let _ = self.waker_tx.try_send(());
     }
 

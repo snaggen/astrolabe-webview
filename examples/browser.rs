@@ -150,6 +150,8 @@ pub struct Browser {
     /// Items from Servo's last ContextMenu, used to build the popup.
     /// Replaced on each right-click; cleared after response.
     servo_context_items: Vec<ContextMenuItem>,
+    /// Last observed media-session generation, to log only new media events.
+    last_media_generation: u64,
 }
 
 // Newtype so async_channel::Receiver<()> satisfies Hash for Subscription::run_with.
@@ -212,6 +214,7 @@ impl libcosmic::Application for Browser {
             scale: 1.0,
             servo_context_menu: None,
             servo_context_items: Vec::new(),
+            last_media_generation: 0,
         };
         (app, Task::none())
     }
@@ -277,6 +280,33 @@ impl libcosmic::Application for Browser {
 
                 if let Some((reason, _bt)) = self.servo.take_crash() {
                     tracing::error!("WebView crashed: {reason}");
+                }
+
+                // Log Media Session events (metadata / playback / position) as
+                // they change, demonstrating the engine API a real browser would
+                // wire to MPRIS.
+                let media_generation = self.servo.media_generation();
+                if media_generation != self.last_media_generation {
+                    self.last_media_generation = media_generation;
+                    if let Some(m) = self.servo.media_metadata() {
+                        tracing::info!(
+                            "Media metadata: title={:?} artist={:?} album={:?}",
+                            m.title,
+                            m.artist,
+                            m.album
+                        );
+                    }
+                    if let Some(state) = self.servo.media_playback_state() {
+                        tracing::info!("Media playback state: {state:?}");
+                    }
+                    if let Some(p) = self.servo.media_position() {
+                        tracing::info!(
+                            "Media position: {:.1}s / {:.1}s (rate {})",
+                            p.position,
+                            p.duration,
+                            p.playback_rate
+                        );
+                    }
                 }
             }
             Message::Input(event) => {
