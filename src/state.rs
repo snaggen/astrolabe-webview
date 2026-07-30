@@ -671,6 +671,16 @@ impl ServoState {
         self.shared.pending_favicon.borrow_mut().take()
     }
 
+    /// Returns `true` once if page content closed this WebView via
+    /// `window.close()`.
+    ///
+    /// Consumes the signal: subsequent calls return `false` until another close
+    /// occurs. The app should remove the corresponding tab, though it may refuse
+    /// to close the last remaining one.
+    pub fn take_closed(&self) -> bool {
+        self.shared.closed.replace(false)
+    }
+
     /// Returns the current cursor shape as last reported by the page.
     pub fn cursor(&self) -> Cursor {
         self.shared.cursor.get()

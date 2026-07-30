@@ -104,6 +104,10 @@ pub(crate) struct SharedState {
     /// or the default location), decoded to RGBA. Drained via
     /// [`crate::state::ServoState::take_favicon`].
     pub pending_favicon: RefCell<Option<RgbaImage>>,
+    /// Set when page content closed this WebView via `window.close()`. Consumed
+    /// once via [`crate::state::ServoState::take_closed`]; the app then removes
+    /// the tab.
+    pub closed: Cell<bool>,
 }
 
 impl SharedState {
@@ -128,6 +132,7 @@ impl SharedState {
             content_filter: Mutex::new(None),
             pending_new_tabs: RefCell::new(Vec::new()),
             pending_favicon: RefCell::new(None),
+            closed: Cell::new(false),
         })
     }
 }
@@ -428,6 +433,13 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         // the default location, so this is more accurate than fetching /favicon.ico.
         let rgba = webview.favicon().as_deref().and_then(favicon_to_rgba);
         *self.shared.pending_favicon.borrow_mut() = rgba;
+        let _ = self.waker_tx.try_send(());
+    }
+
+    fn notify_closed(&self, _webview: WebView) {
+        // Page content called window.close(). Record it and wake the app so it
+        // can drain the flag via `take_closed` and remove the tab.
+        self.shared.closed.set(true);
         let _ = self.waker_tx.try_send(());
     }
 
