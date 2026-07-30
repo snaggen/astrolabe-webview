@@ -205,6 +205,22 @@ impl libcosmic::Application for Browser {
     fn init(core: Core, _flags: ()) -> (Self, Task<Message>) {
         let initial_url = Url::parse("https://servo.org").expect("valid url");
         let size = PhysicalSize::new(1280u32, 800);
+
+        // Demonstrate user content (Fas 22): a script that runs at document-start
+        // on every page, and a stylesheet applied as user-origin CSS. Set before
+        // the first ServoState so the first page load already has them.
+        cosmic_webview::set_user_content(cosmic_webview::UserContent {
+            scripts: vec![cosmic_webview::UserContentItem {
+                source: "console.log('cosmic-webview userscript ran at document-start');"
+                    .to_owned(),
+                path: None,
+            }],
+            stylesheets: vec![cosmic_webview::UserContentItem {
+                source: ":root { filter: hue-rotate(20deg); }".to_owned(),
+                path: None,
+            }],
+        });
+
         let (servo, _rx) = ServoState::new(initial_url.clone(), size, 1.0);
         let app = Browser {
             core,

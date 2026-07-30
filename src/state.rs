@@ -4,12 +4,13 @@ use std::rc::Rc;
 
 use dpi::PhysicalSize;
 use euclid::Scale;
+use servo::user_contents::UserStyleSheet;
 use servo::{
     AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor, DeviceIndependentPixel,
     DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError,
     LoadStatus, MediaMetadata, MediaPositionState, MediaSessionActionType,
     MediaSessionPlaybackState, Opts, PermissionRequest, PrefValue, Preferences, RgbaImage,
-    ServoBuilder, SiteData, StorageType, Theme, WebViewBuilder,
+    ServoBuilder, SiteData, StorageType, Theme, UserContentManager, UserScript, WebViewBuilder,
 };
 use url::Url;
 
@@ -122,6 +123,114 @@ fn apply_web_fonts(fonts: &WebFonts) {
             PrefValue::Int(fonts.monospace_size),
         );
     });
+}
+
+/// A single user script or stylesheet source with its optional on-disk path.
+#[derive(Clone)]
+pub struct UserContentItem {
+    /// The script or CSS source text.
+    pub source: String,
+    /// The file it came from, if any. For scripts this becomes the reported
+    /// `source_file`; for stylesheets it provides the base URL used to resolve
+    /// relative `url()` references.
+    pub path: Option<PathBuf>,
+}
+
+/// User scripts and stylesheets injected into every page, like a userscript
+/// manager. Scripts run at document-start; stylesheets apply as user-origin CSS.
+#[derive(Clone, Default)]
+pub struct UserContent {
+    pub scripts: Vec<UserContentItem>,
+    pub stylesheets: Vec<UserContentItem>,
+}
+
+/// The shared user-content manager and the items currently applied to it, so a
+/// later [`set_user_content`] can remove the old set before adding the new one.
+#[derive(Default)]
+struct UserContentState {
+    desired: UserContent,
+    manager: Option<Rc<UserContentManager>>,
+    scripts: Vec<Rc<UserScript>>,
+    styles: Vec<Rc<UserStyleSheet>>,
+}
+
+thread_local! {
+    static USER_CONTENT: RefCell<UserContentState> =
+        RefCell::new(UserContentState::default());
+}
+
+/// Sets the user scripts and stylesheets injected into every page, replacing any
+/// previously set content.
+///
+/// Call before the first [`ServoState::new`] to apply from the first page load;
+/// calling later updates the running engine and takes effect on the next load
+/// (reload open tabs to apply immediately).
+///
+/// ```no_run
+/// use cosmic_webview::{UserContent, UserContentItem, set_user_content};
+///
+/// set_user_content(UserContent {
+///     scripts: vec![UserContentItem {
+///         source: "document.body.style.border = '2px solid red';".to_owned(),
+///         path: None,
+///     }],
+///     stylesheets: vec![UserContentItem {
+///         source: "a { text-decoration: underline; }".to_owned(),
+///         path: None,
+///     }],
+/// });
+/// ```
+pub fn set_user_content(content: UserContent) {
+    USER_CONTENT.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.desired = content;
+        apply_user_content(&mut state);
+    });
+}
+
+/// Creates the shared [`UserContentManager`] and applies the desired content.
+/// Called once when the engine starts.
+fn init_user_content(servo: &servo::Servo) {
+    USER_CONTENT.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.manager = Some(Rc::new(UserContentManager::new(servo)));
+        apply_user_content(&mut state);
+    });
+}
+
+/// Returns the shared user-content manager, once the engine has started, for a
+/// [`WebViewBuilder`]. New WebViews (including engine-created popups) share it.
+pub(crate) fn user_content_manager() -> Option<Rc<UserContentManager>> {
+    USER_CONTENT.with(|cell| cell.borrow().manager.clone())
+}
+
+/// Re-syncs the manager to `desired`: removes the previously added items and
+/// adds the current set. No-op until the manager exists.
+fn apply_user_content(state: &mut UserContentState) {
+    let Some(manager) = state.manager.clone() else {
+        return;
+    };
+    for script in state.scripts.drain(..) {
+        manager.remove_script(script);
+    }
+    for sheet in state.styles.drain(..) {
+        manager.remove_stylesheet(sheet);
+    }
+    for item in &state.desired.scripts {
+        let script = Rc::new(UserScript::new(item.source.clone(), item.path.clone()));
+        manager.add_script(script.clone());
+        state.scripts.push(script);
+    }
+    for item in &state.desired.stylesheets {
+        let url = item
+            .path
+            .as_ref()
+            .and_then(|path| Url::from_file_path(path).ok())
+            .unwrap_or_else(|| Url::parse("about:blank").expect("about:blank is a valid base URL"));
+        let sheet = Rc::new(UserStyleSheet::new(item.source.clone(), url));
+        manager.add_stylesheet(sheet.clone());
+        state.styles.push(sheet);
+    }
 }
 
 /// Enable the Servo remote devtools server on the given port.
@@ -336,6 +445,9 @@ impl ServoState {
                     .build();
                 servo.setup_logging();
                 servo.set_delegate(Rc::new(CosmicServoDelegate));
+                // Create the shared user-content manager now so every WebView
+                // (including engine-created popups) injects the same scripts/CSS.
+                init_user_content(&servo);
                 *borrow = Some((servo.clone(), waker.clone(), rx.clone()));
                 (servo, waker, rx)
             }
@@ -352,11 +464,14 @@ impl ServoState {
             waker.sender(),
         ));
 
-        let webview = WebViewBuilder::new(&servo, rendering_ctx.as_rc())
+        let mut builder = WebViewBuilder::new(&servo, rendering_ctx.as_rc())
             .url(initial_url)
             .hidpi_scale_factor(Scale::new(scale_factor))
-            .delegate(delegate)
-            .build();
+            .delegate(delegate);
+        if let Some(user_content) = user_content_manager() {
+            builder = builder.user_content_manager(user_content);
+        }
+        let webview = builder.build();
 
         let state = Self {
             servo,

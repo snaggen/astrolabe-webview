@@ -34,9 +34,9 @@ pub use find_bar::{FIND_BAR_ID, FindBar, FindBarMsg, FindBarState, FindResult};
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
 pub use state::{
-    ServoState, ThemePreference, WebFonts, clear_all_cookies, clear_site_data, list_site_data,
-    set_camera_microphone_enabled, set_devtools_enabled, set_profile_dir, set_web_fonts,
-    shutdown_engine,
+    ServoState, ThemePreference, UserContent, UserContentItem, WebFonts, clear_all_cookies,
+    clear_site_data, list_site_data, set_camera_microphone_enabled, set_devtools_enabled,
+    set_profile_dir, set_user_content, set_web_fonts, shutdown_engine,
 };
 pub use waker::IcedEventLoopWaker;
 pub use widget::{WebViewWidget, cursor_interaction};

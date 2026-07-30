@@ -416,11 +416,15 @@ impl WebViewDelegate for CosmicWebViewDelegate {
             child_frame.sink(),
             self.waker_tx.clone(),
         ));
-        let webview = request
+        let mut child_builder = request
             .builder(child_ctx.as_rc())
             .hidpi_scale_factor(parent_webview.hidpi_scale_factor())
-            .delegate(child_delegate)
-            .build();
+            .delegate(child_delegate);
+        // Popups share the same user scripts/stylesheets as normal tabs.
+        if let Some(user_content) = crate::state::user_content_manager() {
+            child_builder = child_builder.user_content_manager(user_content);
+        }
+        let webview = child_builder.build();
 
         self.shared
             .pending_new_tabs
