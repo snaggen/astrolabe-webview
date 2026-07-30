@@ -13,7 +13,9 @@ license = "EUPL-1.2"
 # without it Servo silently falls back to a dummy backend that plays nothing.
 # bluetooth enables the Web Bluetooth DOM API; native-bluetooth adds the real
 # BLE backend (btleplug → BlueZ/D-Bus) instead of the mock used for tests.
-servo = { git = "https://github.com/servo/servo", tag = "v0.3.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth"] }
+# clipboard installs Servo's DefaultClipboardDelegate (arboard); without it
+# copy/paste and navigator.clipboard silently use a process-local string.
+servo = { git = "https://github.com/servo/servo", tag = "v0.3.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
@@ -53,6 +55,11 @@ time = "=0.3.47"
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = { version = "0.38", optional = true }
 khronos-egl = { version = "6", features = ["dynamic"], optional = true }
+# Not used directly: this pulls in arboard's wayland-data-control feature so
+# Servo's clipboard delegate (which depends on arboard) uses the native Wayland
+# clipboard on COSMIC instead of routing through XWayland/X11. Feature
+# unification applies it to Servo's own arboard dependency.
+arboard = { version = "3", features = ["wayland-data-control"] }
 
 [[example]]
 name = "browser"
