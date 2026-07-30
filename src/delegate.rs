@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use async_channel::Sender;
 use content_security_policy::Destination;
 use servo::{
-    AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
+    AllowOrDenyRequest, AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
     CreateNewWebViewRequest, Cursor, EmbedderControl, EmbedderControlId, Image, LoadStatus,
     MediaMetadata, MediaPositionState, MediaSessionEvent, MediaSessionPlaybackState,
     PermissionRequest, PixelFormat, RenderingContext, RgbaImage, ServoDelegate, ServoError,
@@ -535,6 +535,13 @@ pub(crate) struct CosmicServoDelegate;
 impl ServoDelegate for CosmicServoDelegate {
     fn notify_error(&self, error: ServoError) {
         tracing::error!("Servo engine error: {error:?}");
+    }
+
+    fn request_devtools_connection(&self, request: AllowOrDenyRequest) {
+        // The devtools server is loopback-only; still prompt so the user can
+        // decline an unexpected connection. Stored engine-level (one server per
+        // process) and drained via `take_devtools_request`.
+        crate::state::store_devtools_request(request);
     }
 }
 

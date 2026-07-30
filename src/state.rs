@@ -6,11 +6,12 @@ use dpi::PhysicalSize;
 use euclid::Scale;
 use servo::user_contents::UserStyleSheet;
 use servo::{
-    AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor, DeviceIndependentPixel,
-    DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError,
-    LoadStatus, MediaMetadata, MediaPositionState, MediaSessionActionType,
-    MediaSessionPlaybackState, Opts, PermissionRequest, PrefValue, Preferences, RgbaImage,
-    ServoBuilder, SiteData, StorageType, Theme, UserContentManager, UserScript, WebViewBuilder,
+    AllowOrDenyRequest, AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor,
+    DeviceIndependentPixel, DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue,
+    JavaScriptEvaluationError, LoadStatus, MediaMetadata, MediaPositionState,
+    MediaSessionActionType, MediaSessionPlaybackState, Opts, PermissionRequest, PrefValue,
+    Preferences, RgbaImage, ServoBuilder, SiteData, StorageType, Theme, UserContentManager,
+    UserScript, WebViewBuilder,
 };
 use url::Url;
 
@@ -263,6 +264,57 @@ pub fn set_profile_dir(dir: PathBuf) {
 pub fn set_camera_microphone_enabled(enabled: bool) {
     WEBRTC_ENABLED.with(|c| c.set(enabled));
     with_engine(|servo| servo.set_preference("dom_webrtc_enabled", PrefValue::Bool(enabled)));
+}
+
+thread_local! {
+    /// A pending remote-devtools connection request awaiting the app's decision.
+    static PENDING_DEVTOOLS: RefCell<Option<DevtoolsRequest>> = const { RefCell::new(None) };
+}
+
+/// A request from the engine to allow or deny an incoming remote-devtools
+/// connection.
+///
+/// The devtools server is bound to loopback (`127.0.0.1`), so every connection
+/// is local. Respond with [`allow`](Self::allow) or [`deny`](Self::deny);
+/// dropping without responding denies (Servo's default). The connecting client
+/// is blocked until a response is sent.
+pub struct DevtoolsRequest(AllowOrDenyRequest);
+
+impl DevtoolsRequest {
+    /// Allow the devtools client to connect.
+    pub fn allow(self) {
+        self.0.allow();
+    }
+
+    /// Deny the devtools client.
+    pub fn deny(self) {
+        self.0.deny();
+    }
+}
+
+/// Stores a pending devtools-connection request and wakes the app to prompt.
+/// Called by the engine delegate; a new request replaces any previous one,
+/// which is dropped and thereby denied.
+pub(crate) fn store_devtools_request(request: AllowOrDenyRequest) {
+    PENDING_DEVTOOLS.with(|cell| *cell.borrow_mut() = Some(DevtoolsRequest(request)));
+    wake_app();
+}
+
+/// Takes the pending devtools-connection request, if one is waiting. The app
+/// should prompt the user and call [`DevtoolsRequest::allow`] or
+/// [`DevtoolsRequest::deny`].
+pub fn take_devtools_request() -> Option<DevtoolsRequest> {
+    PENDING_DEVTOOLS.with(|cell| cell.borrow_mut().take())
+}
+
+/// Wakes the shared event loop, if the engine is running, so the app processes
+/// newly stored engine-level state.
+fn wake_app() {
+    ENGINE.with(|cell| {
+        if let Some((_, waker, _)) = cell.borrow().as_ref() {
+            let _ = waker.sender().try_send(());
+        }
+    });
 }
 
 /// Flush Servo's session data to disk and tear down the shared engine.
