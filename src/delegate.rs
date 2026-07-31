@@ -6,10 +6,11 @@ use async_channel::Sender;
 use content_security_policy::Destination;
 use servo::{
     AllowOrDenyRequest, AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
-    CreateNewWebViewRequest, Cursor, EmbedderControl, EmbedderControlId, Image, LoadStatus,
-    MediaMetadata, MediaPositionState, MediaSessionEvent, MediaSessionPlaybackState,
-    PermissionRequest, PixelFormat, RenderingContext, RgbaImage, ServoDelegate, ServoError,
-    WebResourceLoad, WebResourceResponse, WebView, WebViewDelegate,
+    CreateNewWebViewRequest, Cursor, DeviceIntPoint, DeviceIntSize, EmbedderControl,
+    EmbedderControlId, Image, LoadStatus, MediaMetadata, MediaPositionState, MediaSessionEvent,
+    MediaSessionPlaybackState, PermissionRequest, PixelFormat, RenderingContext, RgbaImage,
+    ScreenGeometry, ServoDelegate, ServoError, WebResourceLoad, WebResourceResponse, WebView,
+    WebViewDelegate,
 };
 use url::Url;
 
@@ -354,6 +355,22 @@ impl WebViewDelegate for CosmicWebViewDelegate {
     }
 
     fn hide_embedder_control(&self, _webview: WebView, _id: EmbedderControlId) {}
+
+    fn screen_geometry(&self, _webview: WebView) -> Option<ScreenGeometry> {
+        crate::state::servo_screen_geometry()
+    }
+
+    /// Ignored: WebViews are tabs in one host window, so a page must not be able
+    /// to move it. The request is dropped rather than failed, as the DOM APIs
+    /// (`window.moveTo`, `window.moveBy`) have no way to report a refusal.
+    fn request_move_to(&self, _webview: WebView, point: DeviceIntPoint) {
+        tracing::debug!("ignoring page request to move the window to {point:?}");
+    }
+
+    /// Ignored, for the same reason as [`Self::request_move_to`].
+    fn request_resize_to(&self, _webview: WebView, size: DeviceIntSize) {
+        tracing::debug!("ignoring page request to resize the window to {size:?}");
+    }
 
     fn notify_cursor_changed(&self, _webview: WebView, cursor: Cursor) {
         self.shared.cursor.set(cursor);

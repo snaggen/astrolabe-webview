@@ -10,7 +10,7 @@ use cosmic_webview::{DialogMsg, ServoState, WebViewWidget};
 use dpi::PhysicalSize;
 use libcosmic::app::{Core, Settings, Task};
 use libcosmic::executor;
-use libcosmic::iced::{Event, Length, Subscription, window};
+use libcosmic::iced::{Event, Length, Size, Subscription, window};
 use libcosmic::prelude::*;
 use libcosmic::widget;
 use libcosmic::widget::menu::{self, action::MenuAction};
@@ -133,6 +133,10 @@ pub enum Message {
     WebViewResized(u32, u32),
     /// HiDPI scale factor changed — update coordinate conversion factor.
     ScaleChanged(f32),
+    /// The window opened or was resized; screen geometry needs re-querying.
+    WindowGeometryChanged,
+    /// Queried monitor size (`None` if unknown) and window size, in logical pixels.
+    ScreenGeometry(Option<Size>, Size),
 }
 
 pub struct Browser {
@@ -176,6 +180,19 @@ impl Browser {
             self.url_bar = url.to_string();
             self.servo.navigate(url);
         }
+    }
+
+    /// Ask the windowing system for the monitor and window size, which come back
+    /// as [`Message::ScreenGeometry`].
+    fn refresh_screen_geometry(&self) -> Task<Message> {
+        let Some(id) = self.core.main_window_id() else {
+            return Task::none();
+        };
+        window::monitor_size(id)
+            .then(move |monitor| {
+                window::size(id).map(move |size| Message::ScreenGeometry(monitor, size))
+            })
+            .map(libcosmic::action::app)
     }
 
     /// Dismiss the pending Servo context menu (if any) without selecting.
@@ -245,6 +262,9 @@ impl libcosmic::Application for Browser {
 
         let window_sub = event::listen_with(|event, _status, _id| match event {
             Event::Window(window::Event::Rescaled(factor)) => Some(Message::ScaleChanged(factor)),
+            Event::Window(window::Event::Opened { .. } | window::Event::Resized(_)) => {
+                Some(Message::WindowGeometryChanged)
+            }
             _ => None,
         });
 
@@ -377,6 +397,29 @@ impl libcosmic::Application for Browser {
             }
             Message::ScaleChanged(factor) => {
                 self.scale = factor;
+                return self.refresh_screen_geometry();
+            }
+            Message::WindowGeometryChanged => return self.refresh_screen_geometry(),
+            // Demonstrate screen geometry (Fas 27): what `window.screen` and
+            // `window.outerWidth`/`outerHeight` report. iced measures in logical
+            // pixels, the engine in physical ones.
+            Message::ScreenGeometry(monitor, window_size) => {
+                let to_physical = |size: Size| {
+                    PhysicalSize::new(
+                        (size.width * self.scale).round() as u32,
+                        (size.height * self.scale).round() as u32,
+                    )
+                };
+                let window = to_physical(window_size);
+                let screen = monitor.map_or(window, to_physical);
+                cosmic_webview::set_screen_geometry(cosmic_webview::ScreenGeometry {
+                    screen_size: screen,
+                    // No work area is available, so panels are not subtracted.
+                    available_size: screen,
+                    // Wayland does not report where a window sits on screen.
+                    window_position: dpi::PhysicalPosition::new(0, 0),
+                    window_size: window,
+                });
             }
         }
         Task::none()

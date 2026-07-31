@@ -2,16 +2,16 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use dpi::PhysicalSize;
+use dpi::{PhysicalPosition, PhysicalSize};
 use euclid::Scale;
 use servo::user_contents::UserStyleSheet;
 use servo::{
     AllowOrDenyRequest, AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor,
-    DeviceIndependentPixel, DeviceIntRect, DevicePixel, EmbedderControl, InputEvent, JSValue,
-    JavaScriptEvaluationError, LoadStatus, MediaMetadata, MediaPositionState,
-    MediaSessionActionType, MediaSessionPlaybackState, Opts, PermissionRequest, PrefValue,
-    Preferences, RgbaImage, ServoBuilder, SiteData, StorageType, Theme, UserContentManager,
-    UserScript, WebViewBuilder,
+    DeviceIndependentPixel, DeviceIntPoint, DeviceIntRect, DeviceIntSize, DevicePixel,
+    EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError, LoadStatus, MediaMetadata,
+    MediaPositionState, MediaSessionActionType, MediaSessionPlaybackState, Opts, PermissionRequest,
+    PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData, StorageType, Theme,
+    UserContentManager, UserScript, WebViewBuilder,
 };
 use url::Url;
 
@@ -40,6 +40,72 @@ thread_local! {
     /// Port for the Servo remote devtools server, or `None` if disabled.
     /// Read once at engine startup — changing it afterwards has no effect.
     static DEVTOOLS_PORT: Cell<Option<u16>> = const { Cell::new(None) };
+    /// Screen and window geometry reported to web content, or `None` until the
+    /// host supplies it via [`set_screen_geometry`].
+    static SCREEN_GEOMETRY: Cell<Option<ScreenGeometry>> = const { Cell::new(None) };
+}
+
+/// The screen and window geometry reported to web content, in physical pixels.
+///
+/// Backs `window.screen`, `window.screenLeft`/`screenTop` and
+/// `window.outerWidth`/`outerHeight`. Set it with [`set_screen_geometry`];
+/// until then web content sees the size of the rendering context instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScreenGeometry {
+    /// Full size of the screen the window is on (`screen.width`/`height`).
+    pub screen_size: PhysicalSize<u32>,
+    /// Size of the screen available to windows — the full size minus panels and
+    /// docks (`screen.availWidth`/`availHeight`). Window systems that do not
+    /// report a work area should pass `screen_size`.
+    pub available_size: PhysicalSize<u32>,
+    /// Top-left corner of the window on the screen. Wayland does not expose
+    /// window positions; pass the origin there.
+    pub window_position: PhysicalPosition<i32>,
+    /// Outer size of the window, including decorations.
+    pub window_size: PhysicalSize<u32>,
+}
+
+/// Set the screen and window geometry reported to web content.
+///
+/// Applies to every WebView — the engine serves one window. Call again whenever
+/// the window is resized, rescaled, or moved to another screen; content reads
+/// the latest value on demand, so no reload is needed.
+///
+/// ```no_run
+/// use cosmic_webview::{ScreenGeometry, set_screen_geometry};
+/// use dpi::{PhysicalPosition, PhysicalSize};
+///
+/// let screen = PhysicalSize::new(2560, 1440);
+/// set_screen_geometry(ScreenGeometry {
+///     screen_size: screen,
+///     available_size: screen,
+///     window_position: PhysicalPosition::new(0, 0),
+///     window_size: PhysicalSize::new(1280, 800),
+/// });
+/// ```
+pub fn set_screen_geometry(geometry: ScreenGeometry) {
+    SCREEN_GEOMETRY.with(|cell| cell.set(Some(geometry)));
+}
+
+/// The geometry to answer Servo's `screen_geometry` delegate call with, in the
+/// engine's own euclid types. `None` leaves Servo on its rendering-context
+/// fallback.
+pub(crate) fn servo_screen_geometry() -> Option<servo::ScreenGeometry> {
+    let geometry = SCREEN_GEOMETRY.with(|cell| cell.get())?;
+    let to_size = |size: PhysicalSize<u32>| {
+        DeviceIntSize::new(
+            i32::try_from(size.width).unwrap_or(i32::MAX),
+            i32::try_from(size.height).unwrap_or(i32::MAX),
+        )
+    };
+    Some(servo::ScreenGeometry {
+        size: to_size(geometry.screen_size),
+        available_size: to_size(geometry.available_size),
+        window_rect: DeviceIntRect::from_origin_and_size(
+            DeviceIntPoint::new(geometry.window_position.x, geometry.window_position.y),
+            to_size(geometry.window_size),
+        ),
+    })
 }
 
 /// Default fonts for web content — the page's serif, sans-serif, and monospace
@@ -1165,6 +1231,34 @@ mod tests {
     #[test]
     fn theme_preference_defaults_to_follow_system() {
         assert_eq!(ThemePreference::default(), ThemePreference::FollowSystem);
+    }
+
+    #[test]
+    fn screen_geometry_converts_to_engine_types() {
+        set_screen_geometry(ScreenGeometry {
+            screen_size: PhysicalSize::new(2560, 1440),
+            available_size: PhysicalSize::new(2560, 1392),
+            window_position: PhysicalPosition::new(10, 20),
+            window_size: PhysicalSize::new(1280, 800),
+        });
+
+        let geometry = servo_screen_geometry().expect("geometry was just set");
+        assert_eq!(geometry.size, DeviceIntSize::new(2560, 1440));
+        assert_eq!(geometry.available_size, DeviceIntSize::new(2560, 1392));
+        assert_eq!(geometry.window_rect.min, DeviceIntPoint::new(10, 20));
+        assert_eq!(geometry.window_rect.size(), DeviceIntSize::new(1280, 800));
+    }
+
+    /// Sizes beyond `i32::MAX` are nonsensical but must not panic; they saturate.
+    #[test]
+    fn screen_geometry_saturates_oversized_values() {
+        set_screen_geometry(ScreenGeometry {
+            screen_size: PhysicalSize::new(u32::MAX, 1440),
+            ..ScreenGeometry::default()
+        });
+
+        let geometry = servo_screen_geometry().expect("geometry was just set");
+        assert_eq!(geometry.size, DeviceIntSize::new(i32::MAX, 1440));
     }
 
     #[test]
