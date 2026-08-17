@@ -54,9 +54,12 @@ struct WebViewState {
 /// - No `WheelScrolled`, `Touch`, or `Mouse(ButtonPressed)` fires on a finger
 ///   rest. A two-finger rest during a coast produced a multi-second gap of total
 ///   silence in the event stream.
-/// - No `PanGesture`/`PinchGesture`/`RotationGesture` fires either: libinput's
-///   *hold* gesture (which normally cancels momentum) is not forwarded through
-///   Wayland's `zwp_pointer_gestures` protocol, so winit never receives it.
+/// - No gesture event fires either. libinput's *hold* gesture (which is what
+///   normally cancels momentum) has no `zwp_pointer_gestures` counterpart, so
+///   winit never receives it. Pinch and swipe *are* in that protocol and winit
+///   does report them, but iced has no event to carry them — see
+///   [`WebViewWidget`]'s note on pinch zoom, and pop-os/libcosmic#1315, which
+///   asks for the whole protocol and was filed over this very limitation.
 /// - Single-finger taps also produce nothing (tap-to-click clicks do not reach
 ///   the app). A touchpad is a Wayland *pointer* device, so no `Touch` events
 ///   ever fire.
@@ -266,6 +269,24 @@ type ShortcutFilter<'a> = Box<dyn Fn(&keyboard::Key, keyboard::Modifiers) -> boo
 ///     .on_resize(Message::Resized)
 /// # }
 /// ```
+///
+/// # Known limitation: no pinch-to-zoom (blocked upstream)
+///
+/// Touchpad pinch does not reach the page. The compositor and winit both carry
+/// it — Wayland's `zwp_pointer_gestures_v1` has a pinch interface, and pop-os
+/// winit 0.31 (tag `cosmic-0.14`) turns it into `WindowEvent::PinchGesture` —
+/// but iced has no event of its own for gestures, so `iced_winit`'s conversion
+/// drops it. There is nothing to hook on this side of the boundary: carrying it
+/// through needs a new variant in iced's `Event` plus a conversion arm, both in
+/// the libcosmic fork. Zoom therefore comes from the embedder's own controls
+/// ([`ServoState::set_page_zoom`]).
+///
+/// Tracked upstream (both open as of August 2026):
+/// - <https://github.com/pop-os/libcosmic/issues/1315> — gesture support missing
+///   from libcosmic/iced, covering all of `zwp_pointer_gestures_v1`
+/// - <https://github.com/iced-rs/iced/pull/3377> — adds
+///   `mouse::Event::PinchGesture` and the conversion iced_winit is missing
+///   (15 lines); pop-os/iced would still have to pick it up
 pub struct WebViewWidget<'a, Message> {
     frame: &'a WebViewFrame,
     width: Length,
