@@ -8,9 +8,9 @@ use servo::{
     AllowOrDenyRequest, AuthenticationRequest, BluetoothDeviceSelectionRequest, ConsoleLogLevel,
     CreateNewWebViewRequest, Cursor, DeviceIntPoint, DeviceIntSize, EmbedderControl,
     EmbedderControlId, Image, LoadStatus, MediaMetadata, MediaPositionState, MediaSessionEvent,
-    MediaSessionPlaybackState, PermissionRequest, PixelFormat, RenderingContext, RgbaImage,
-    ScreenGeometry, ServoDelegate, ServoError, WebResourceLoad, WebResourceResponse, WebView,
-    WebViewDelegate,
+    MediaSessionPlaybackState, Notification, PermissionRequest, PixelFormat, RenderingContext,
+    RgbaImage, ScreenGeometry, ServoDelegate, ServoError, WebResourceLoad, WebResourceResponse,
+    WebView, WebViewDelegate,
 };
 use url::Url;
 
@@ -77,6 +77,13 @@ pub(crate) struct SharedState {
     /// device or cancel. A new arrival replaces any previous one, which is dropped
     /// and cancels automatically.
     pub pending_bluetooth: RefCell<Option<BluetoothDeviceSelectionRequest>>,
+    /// Pending `beforeunload` request waiting for the user to confirm leaving a
+    /// page that says it has unsaved work. Dropping it without answering allows
+    /// the unload, which is Servo's default.
+    pub pending_unload: RefCell<Option<AllowOrDenyRequest>>,
+    /// Desktop notifications the page asked to display, oldest first. A page can
+    /// post several before the app next polls, so they queue rather than replace.
+    pub pending_notifications: RefCell<Vec<Notification>>,
     /// Most recent cursor shape reported by the page.
     pub cursor: Cell<Cursor>,
     /// URL of the hyperlink currently under the cursor, or `None`. Reported by
@@ -134,6 +141,8 @@ impl SharedState {
             pending_auth: RefCell::new(None),
             pending_permission: RefCell::new(None),
             pending_bluetooth: RefCell::new(None),
+            pending_unload: RefCell::new(None),
+            pending_notifications: RefCell::new(Vec::new()),
             cursor: Cell::new(Cursor::Default),
             status_text: RefCell::new(None),
             is_fullscreen: Cell::new(false),
@@ -407,6 +416,28 @@ impl WebViewDelegate for CosmicWebViewDelegate {
 
     fn request_permission(&self, _webview: WebView, request: PermissionRequest) {
         *self.shared.pending_permission.borrow_mut() = Some(request);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    /// A page's `beforeunload` handler asked whether it may be discarded.
+    ///
+    /// Queued for the app to confirm with the user. A second request replaces an
+    /// unanswered one, which then allows its own unload as it drops — the newer
+    /// question is the one the user is looking at.
+    fn request_unload(&self, _webview: WebView, request: AllowOrDenyRequest) {
+        *self.shared.pending_unload.borrow_mut() = Some(request);
+        let _ = self.waker_tx.try_send(());
+    }
+
+    /// The page posted a desktop notification through the Notification API.
+    ///
+    /// Servo has already checked the permission, so reaching here means the site
+    /// is allowed to notify.
+    fn show_notification(&self, _webview: WebView, notification: Notification) {
+        self.shared
+            .pending_notifications
+            .borrow_mut()
+            .push(notification);
         let _ = self.waker_tx.try_send(());
     }
 

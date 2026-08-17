@@ -9,9 +9,9 @@ use servo::{
     AllowOrDenyRequest, AuthenticationRequest, BluetoothDeviceSelectionRequest, Cursor,
     DeviceIndependentPixel, DeviceIntPoint, DeviceIntRect, DeviceIntSize, DevicePixel,
     EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError, LoadStatus, MediaMetadata,
-    MediaPositionState, MediaSessionActionType, MediaSessionPlaybackState, Opts, PermissionRequest,
-    PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData, StorageType, Theme,
-    UserContentManager, UserScript, WebViewBuilder,
+    MediaPositionState, MediaSessionActionType, MediaSessionPlaybackState, Notification, Opts,
+    PermissionRequest, PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData, StorageType,
+    Theme, UserContentManager, UserScript, WebViewBuilder,
 };
 use url::Url;
 
@@ -852,6 +852,25 @@ impl ServoState {
     /// sends the default (deny) reply.
     pub fn take_permission_request(&self) -> Option<PermissionRequest> {
         self.shared.pending_permission.borrow_mut().take()
+    }
+
+    /// Takes the pending `beforeunload` request, if any.
+    ///
+    /// A page with unsaved work asks before it is discarded. The embedder
+    /// answers with [`AllowOrDenyRequest::allow`] to let the navigation or close
+    /// proceed, or [`AllowOrDenyRequest::deny`] to keep the page; dropping the
+    /// request allows the unload, which is Servo's own default.
+    pub fn take_unload_request(&self) -> Option<AllowOrDenyRequest> {
+        self.shared.pending_unload.borrow_mut().take()
+    }
+
+    /// Takes every desktop notification the page has posted since the last call,
+    /// oldest first.
+    ///
+    /// Servo has already applied the site's notification permission, so anything
+    /// returned here is cleared to display.
+    pub fn take_notifications(&self) -> Vec<Notification> {
+        std::mem::take(&mut *self.shared.pending_notifications.borrow_mut())
     }
 
     /// Takes the pending Bluetooth device-selection request, if any.
