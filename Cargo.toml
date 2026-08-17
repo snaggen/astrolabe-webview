@@ -15,18 +15,18 @@ license = "EUPL-1.2"
 # BLE backend (btleplug → BlueZ/D-Bus) instead of the mock used for tests.
 # clipboard installs Servo's DefaultClipboardDelegate (arboard); without it
 # copy/paste and navigator.clipboard silently use a process-local string.
-servo = { git = "https://github.com/servo/servo", tag = "v0.3.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard"] }
+servo = { git = "https://github.com/servo/servo", tag = "v0.4.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
-# must be compatible with what servo 0.3.0 uses internally (surfman 0.12.x).
-surfman      = { version = "0.12", features = ["chains"] }
+# must be compatible with what servo 0.4.0 uses internally (surfman 0.13.x).
+surfman      = { version = "0.13", features = ["chains"] }
 gleam        = "0.15"
 glow         = "0.17.0"
 
 # UI toolkit (not yet on crates.io) — wgpu is always required for GPU frame rendering
-libcosmic    = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", rev = "18a7a75e3316b1f4855777af677d989467f2da74", features = ["wgpu"] }
-iced_wgpu    = { git = "https://github.com/pop-os/libcosmic", rev = "18a7a75e3316b1f4855777af677d989467f2da74" }
+libcosmic    = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", rev = "1f8d8786940cc6db59d412153c5a03f69a20375c", features = ["wgpu"] }
+iced_wgpu    = { git = "https://github.com/pop-os/libcosmic", rev = "1f8d8786940cc6db59d412153c5a03f69a20375c" }
 
 # Event loop waker channel — Send + Sync + Clone, suitable for crossing the
 # Servo/iced boundary without requiring Servo to be Send.

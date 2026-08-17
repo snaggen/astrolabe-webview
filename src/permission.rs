@@ -49,7 +49,10 @@ pub fn feature_key(feature: PermissionFeature) -> &'static str {
         PermissionFeature::BackgroundSync => "background_sync",
         PermissionFeature::Bluetooth => "bluetooth",
         PermissionFeature::PersistentStorage => "persistent_storage",
-        PermissionFeature::ScreenWakeLock => "screen_wake_lock",
+        // The payload names which resource is held awake; today the enum has a
+        // single variant, and the key stays stable if more are added.
+        PermissionFeature::ScreenWakeLock(_) => "screen_wake_lock",
+        PermissionFeature::Gamepad => "gamepad",
     }
 }
 
@@ -75,6 +78,7 @@ pub fn feature_label_from_key(key: &str) -> Option<&'static str> {
         "bluetooth" => "Bluetooth",
         "persistent_storage" => "Persistent storage",
         "screen_wake_lock" => "Screen wake lock",
+        "gamepad" => "Game controllers",
         _ => return None,
     };
     Some(label)
