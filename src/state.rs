@@ -43,12 +43,26 @@ thread_local! {
     /// Screen and window geometry reported to web content, or `None` until the
     /// host supplies it via [`set_screen_geometry`].
     static SCREEN_GEOMETRY: Cell<Option<ScreenGeometry>> = const { Cell::new(None) };
+    /// Preferences the engine started with, kept for the WebDriver server,
+    /// which resets them between sessions.
+    #[cfg(feature = "webdriver")]
+    static WEBDRIVER_PREFERENCES: RefCell<Option<Preferences>> = const { RefCell::new(None) };
     /// The process-wide gamepad reader. gilrs owns the device connections, so a
     /// second instance would compete with this one for the same events; every
     /// WebView shares it. `None` once opening the devices has failed.
     #[cfg(feature = "gamepad")]
     static GAMEPADS: RefCell<Option<Option<Rc<crate::gamepad::CosmicGamepadDelegate>>>> =
         const { RefCell::new(None) };
+}
+
+/// The waker and preferences the WebDriver server needs, or `None` before the
+/// engine has started.
+#[cfg(feature = "webdriver")]
+pub(crate) fn webdriver_engine_handles() -> Option<(IcedEventLoopWaker, Preferences)> {
+    let waker =
+        ENGINE.with(|engine| engine.borrow().as_ref().map(|(_, waker, _)| waker.clone()))?;
+    let preferences = WEBDRIVER_PREFERENCES.with(|cell| cell.borrow().clone())?;
+    Some((waker, preferences))
 }
 
 /// The shared gamepad reader, opened on first use.
@@ -572,6 +586,10 @@ impl ServoState {
                     fonts_default_monospace_size: web_fonts.monospace_size,
                     ..Default::default()
                 };
+                // The WebDriver server resets preferences between sessions, so
+                // it needs the same set the browser started with.
+                #[cfg(feature = "webdriver")]
+                WEBDRIVER_PREFERENCES.with(|cell| *cell.borrow_mut() = Some(preferences.clone()));
                 let servo = ServoBuilder::default()
                     .opts(opts)
                     .preferences(preferences)
@@ -779,6 +797,15 @@ impl ServoState {
         self.rendering_ctx.as_rc().read_to_image(rect)
     }
 
+    /// How many loads this tab has started.
+    ///
+    /// Read it before asking for a navigation and compare afterwards: the tab
+    /// reports [`LoadStatus::Complete`] for the page it is *already* showing,
+    /// so the status alone cannot say whether the new load has finished.
+    pub fn load_generation(&self) -> u64 {
+        self.shared.load_generation.get()
+    }
+
     /// Returns the load status of the page currently loading or loaded in this tab.
     pub fn load_status(&self) -> LoadStatus {
         self.shared.load_status.get()
@@ -872,6 +899,22 @@ impl ServoState {
     /// sends the default (deny) reply.
     pub fn take_permission_request(&self) -> Option<PermissionRequest> {
         self.shared.pending_permission.borrow_mut().take()
+    }
+
+    /// This WebView's engine-side identifier, which WebDriver commands address.
+    #[cfg(feature = "webdriver")]
+    pub fn webview_id(&self) -> servo::WebViewId {
+        self.webview.id()
+    }
+
+    /// Hands a WebDriver command to the engine.
+    ///
+    /// For the commands the embedder does not own itself — scripts, cookies,
+    /// element queries — the engine knows how to answer and holds the reply
+    /// channel the command carries.
+    #[cfg(feature = "webdriver")]
+    pub fn execute_webdriver_command(&self, command: servo::WebDriverCommandMsg) {
+        self.servo.execute_webdriver_command(command);
     }
 
     /// Feeds pending gamepad input into this WebView, returning `true` while a

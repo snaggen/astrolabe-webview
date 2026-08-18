@@ -53,6 +53,9 @@ pub(crate) struct PendingChildWebView {
 /// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
     pub load_status: Cell<LoadStatus>,
+    /// Incremented whenever a load starts. Lets a caller that recorded the
+    /// value before asking for a navigation tell the new load from the old one.
+    pub load_generation: Cell<u64>,
     /// Incremented each time a new frame is committed to the frame sink.
     /// Callers can compare against a stored value to detect actual frame changes.
     pub frame_generation: Cell<u64>,
@@ -134,6 +137,7 @@ impl SharedState {
     pub(crate) fn new() -> Rc<Self> {
         Rc::new(Self {
             load_status: Cell::new(LoadStatus::Started),
+            load_generation: Cell::new(0),
             frame_generation: Cell::new(0),
             visible: Cell::new(true),
             frame_pending: Cell::new(false),
@@ -344,6 +348,12 @@ impl WebViewDelegate for CosmicWebViewDelegate {
     }
 
     fn notify_load_status_changed(&self, _webview: WebView, status: LoadStatus) {
+        // Count starts, not changes: a caller waiting for *this* navigation to
+        // finish needs to tell it apart from the page that was already loaded.
+        if status == LoadStatus::Started {
+            let generation = self.shared.load_generation.get();
+            self.shared.load_generation.set(generation.wrapping_add(1));
+        }
         self.shared.load_status.set(status);
     }
 

@@ -57,6 +57,10 @@ ash = { version = "0.38", optional = true }
 khronos-egl = { version = "6", features = ["dynamic"], optional = true }
 # Gamepad input for the `gamepad` feature. Matches the version Servo v0.4.0 uses.
 gilrs        = { version = "0.11.1", optional = true }
+# WebDriver server for the `webdriver` feature. Must track the servo tag above:
+# it is part of the same workspace and shares its internal types.
+webdriver_server = { package = "servo-webdriver-server", git = "https://github.com/servo/servo", tag = "v0.4.0", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
 # Not used directly: this pulls in arboard's wayland-data-control feature so
 # Servo's clipboard delegate (which depends on arboard) uses the native Wayland
 # clipboard on COSMIC instead of routing through XWayland/X11. Feature
@@ -90,6 +94,10 @@ xdg-portal = ["libcosmic/xdg-portal"]
 # GamepadDelegate type does not exist; adds gilrs to read the devices, since
 # Servo leaves that to the embedder.
 gamepad = ["servo/gamepad", "dep:gilrs"]
+
+# WebDriver automation server. Servo's protocol server is a separate crate that
+# the `servo` crate does not re-export, so it is pulled from the same tag.
+webdriver = ["dep:webdriver_server", "dep:crossbeam-channel"]
 
 browser-example = [
     "libcosmic/winit",

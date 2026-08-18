@@ -27,6 +27,8 @@ pub mod primitive;
 mod rendering;
 mod state;
 mod waker;
+#[cfg(feature = "webdriver")]
+pub mod webdriver;
 mod widget;
 
 // Public API
@@ -51,4 +53,10 @@ pub use servo::{
     ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent,
     LoadStatus, MediaMetadata, MediaPositionState, MediaSessionActionType,
     MediaSessionPlaybackState, Notification, PermissionFeature, PermissionRequest, SiteData, Theme,
+};
+#[cfg(feature = "webdriver")]
+pub use servo::{
+    DeviceIndependentIntRect, GenericSender, NewWindowTypeHint, ScreenshotCaptureError,
+    WebDriverCommandMsg, WebDriverLoadStatus, WebDriverUserPrompt, WebDriverUserPromptAction,
+    WebViewId,
 };
