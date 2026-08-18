@@ -55,6 +55,8 @@ time = "=0.3.47"
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = { version = "0.38", optional = true }
 khronos-egl = { version = "6", features = ["dynamic"], optional = true }
+# Gamepad input for the `gamepad` feature. Matches the version Servo v0.4.0 uses.
+gilrs        = { version = "0.11.1", optional = true }
 # Not used directly: this pulls in arboard's wayland-data-control feature so
 # Servo's clipboard delegate (which depends on arboard) uses the native Wayland
 # clipboard on COSMIC instead of routing through XWayland/X11. Feature
@@ -83,6 +85,11 @@ gl-media = []
 # Enable the XDG desktop portal file chooser (Wayland-native, requires D-Bus).
 # Without this feature FilePicker controls are auto-dismissed.
 xdg-portal = ["libcosmic/xdg-portal"]
+
+# Gamepad API. Mirrors Servo's own `gamepad` feature, without which the
+# GamepadDelegate type does not exist; adds gilrs to read the devices, since
+# Servo leaves that to the embedder.
+gamepad = ["servo/gamepad", "dep:gilrs"]
 
 browser-example = [
     "libcosmic/winit",

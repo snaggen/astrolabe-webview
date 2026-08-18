@@ -17,6 +17,8 @@ pub(crate) mod delegate;
 pub(crate) mod dialog_handler;
 pub mod dialogs;
 pub mod find_bar;
+#[cfg(feature = "gamepad")]
+mod gamepad;
 #[cfg(all(target_os = "linux", feature = "dmabuf"))]
 pub(crate) mod gpu_share;
 pub(crate) mod input;

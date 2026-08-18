@@ -43,6 +43,22 @@ thread_local! {
     /// Screen and window geometry reported to web content, or `None` until the
     /// host supplies it via [`set_screen_geometry`].
     static SCREEN_GEOMETRY: Cell<Option<ScreenGeometry>> = const { Cell::new(None) };
+    /// The process-wide gamepad reader. gilrs owns the device connections, so a
+    /// second instance would compete with this one for the same events; every
+    /// WebView shares it. `None` once opening the devices has failed.
+    #[cfg(feature = "gamepad")]
+    static GAMEPADS: RefCell<Option<Option<Rc<crate::gamepad::CosmicGamepadDelegate>>>> =
+        const { RefCell::new(None) };
+}
+
+/// The shared gamepad reader, opened on first use.
+#[cfg(feature = "gamepad")]
+fn gamepads() -> Option<Rc<crate::gamepad::CosmicGamepadDelegate>> {
+    GAMEPADS.with(|cell| {
+        cell.borrow_mut()
+            .get_or_insert_with(|| crate::gamepad::CosmicGamepadDelegate::new().map(Rc::new))
+            .clone()
+    })
 }
 
 /// The screen and window geometry reported to web content, in physical pixels.
@@ -589,6 +605,10 @@ impl ServoState {
         if let Some(user_content) = user_content_manager() {
             builder = builder.user_content_manager(user_content);
         }
+        #[cfg(feature = "gamepad")]
+        if let Some(gamepads) = gamepads() {
+            builder = builder.gamepad_delegate(gamepads);
+        }
         let webview = builder.build();
 
         let state = Self {
@@ -852,6 +872,20 @@ impl ServoState {
     /// sends the default (deny) reply.
     pub fn take_permission_request(&self) -> Option<PermissionRequest> {
         self.shared.pending_permission.borrow_mut().take()
+    }
+
+    /// Feeds pending gamepad input into this WebView, returning `true` while a
+    /// gamepad is connected.
+    ///
+    /// Servo does not read input devices; the embedder polls them. Call this on
+    /// a regular tick for the tab the user is looking at — a page only sees the
+    /// pads while it is polled. The return value says whether polling needs to
+    /// stay frequent: with nothing connected there is nothing to miss.
+    ///
+    /// Only present with the `gamepad` feature, which also turns on Servo's.
+    #[cfg(feature = "gamepad")]
+    pub fn poll_gamepads(&self) -> bool {
+        gamepads().is_some_and(|gamepads| gamepads.poll(&self.webview))
     }
 
     /// Takes the pending `beforeunload` request, if any.
