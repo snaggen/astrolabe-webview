@@ -7,33 +7,33 @@ description = "Servo-based WebView widget for the COSMIC Desktop environment"
 license = "EUPL-1.2"
 
 [dependencies]
-# Web engine — servo is not published on crates.io; pinned to the v0.3.0 release
-# tag. Switch to version = "0.3.0" from crates.io once published.
+# Web engine — servo is not published on crates.io; pinned to the v0.5.0 release
+# tag. Switch to version = "0.5.0" from crates.io once published.
 # media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
 # without it Servo silently falls back to a dummy backend that plays nothing.
 # bluetooth enables the Web Bluetooth DOM API; native-bluetooth adds the real
 # BLE backend (btleplug → BlueZ/D-Bus) instead of the mock used for tests.
 # clipboard installs Servo's DefaultClipboardDelegate (arboard); without it
 # copy/paste and navigator.clipboard silently use a process-local string.
-servo = { git = "https://github.com/servo/servo", tag = "v0.4.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard"] }
+servo = { git = "https://github.com/servo/servo", tag = "v0.5.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
-# must be compatible with what servo 0.4.0 uses internally (surfman 0.13.x).
+# must be compatible with what servo 0.5.0 uses internally (surfman 0.13.x).
 surfman      = { version = "0.13", features = ["chains"] }
 gleam        = "0.15"
 glow         = "0.17.0"
 
 # UI toolkit (not yet on crates.io) — wgpu is always required for GPU frame rendering
-libcosmic    = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", rev = "1f8d8786940cc6db59d412153c5a03f69a20375c", features = ["wgpu"] }
-iced_wgpu    = { git = "https://github.com/pop-os/libcosmic", rev = "1f8d8786940cc6db59d412153c5a03f69a20375c" }
+libcosmic    = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", rev = "c003a58fff660f5c55ebfb54a5908722fa7d1d6e", features = ["wgpu"] }
+iced_wgpu    = { git = "https://github.com/pop-os/libcosmic", rev = "c003a58fff660f5c55ebfb54a5908722fa7d1d6e" }
 
 # Event loop waker channel — Send + Sync + Clone, suitable for crossing the
 # Servo/iced boundary without requiring Servo to be Send.
 async-channel = "2"
 
 # CSP Destination enum, used to map Servo resource types to adblock type strings.
-content-security-policy = "0.8"
+content-security-policy = "0.8.1"
 
 # URL parsing and physical pixel sizes
 url = "2.5"
@@ -46,20 +46,16 @@ tracing = "0.1"
 # TLS provider — must be initialised once before Servo starts networking.
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 
-# time 0.3.48 added a From<HourBase> impl that conflicts with cookie's blanket
-# From<T: Into<Option<OffsetDateTime>>> impl (E0119). Pin until cookie is fixed.
-time = "=0.3.47"
-
 # Zero-copy GPU frame sharing (dmabuf): Vulkan memory export via ash (same
 # version as wgpu-hal uses internally) and EGL dmabuf import via khronos-egl.
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = { version = "0.38", optional = true }
 khronos-egl = { version = "6", features = ["dynamic"], optional = true }
-# Gamepad input for the `gamepad` feature. Matches the version Servo v0.4.0 uses.
+# Gamepad input for the `gamepad` feature. Matches the version Servo v0.5.0 uses.
 gilrs        = { version = "0.11.1", optional = true }
 # WebDriver server for the `webdriver` feature. Must track the servo tag above:
 # it is part of the same workspace and shares its internal types.
-webdriver_server = { package = "servo-webdriver-server", git = "https://github.com/servo/servo", tag = "v0.4.0", optional = true }
+webdriver_server = { package = "servo-webdriver-server", git = "https://github.com/servo/servo", tag = "v0.5.0", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
 # Not used directly: this pulls in arboard's wayland-data-control feature so
 # Servo's clipboard delegate (which depends on arboard) uses the native Wayland
@@ -98,6 +94,12 @@ gamepad = ["servo/gamepad", "dep:gilrs"]
 # WebDriver automation server. Servo's protocol server is a separate crate that
 # the `servo` crate does not re-export, so it is pulled from the same tag.
 webdriver = ["dep:webdriver_server", "dep:crossbeam-channel"]
+
+# Compile FreeType from source instead of linking the system library. Servo
+# turns this on by default; here it is opt-in because COSMIC systems ship a
+# suitable FreeType and building it costs time. Enable it where pkg-config
+# cannot find one — Servo's font code fails to build otherwise.
+bundled-freetype = ["servo/bundled_freetype"]
 
 browser-example = [
     "libcosmic/winit",

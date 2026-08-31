@@ -1,6 +1,6 @@
 # cosmic-webview
 
-A Servo-based WebView widget for the COSMIC Desktop environment. Uses Servo 0.3.0's embedding
+A Servo-based WebView widget for the COSMIC Desktop environment. Uses Servo 0.5.0's embedding
 API for web rendering and libcosmic (iced + wgpu) as the UI toolkit.
 
 See `PLAN.md` for the full architecture and implementation plan.
@@ -13,20 +13,21 @@ PLAN.md, REQUIREMENTS.md and CLAUDE.md should not be checked in to the repositor
 ## Repository Layout
 
 This crate lives at `~/src/cosmic-webview/`. Servo is a git dependency pinned to the
-`v0.3.0` release tag; libcosmic is a local path dependency.
+`v0.5.0` release tag; libcosmic is a git dependency pinned to a revision.
 
 | Path | Purpose |
 |------|---------|
 | `~/src/servo/` | Local Servo checkout — used to read source and explore the embedding API with jCodemunch. Not a Cargo dependency. |
-| `~/src/cosmic-epoch/libcosmic/` | Local libcosmic checkout. Used as a **path dependency** in `Cargo.toml`. |
+| `~/src/cosmic-epoch/libcosmic/` | Local libcosmic checkout — used to read source and pick the revision pinned in `Cargo.toml`. Not a Cargo dependency. |
 
 ---
 
 ## Key Technical Decisions
 
-- **Servo pinned to the `v0.3.0` git tag**: not published on crates.io, so `servo` is a git
-  dependency on tag `v0.3.0`. Do not switch to a path dependency without a specific reason.
-- **libcosmic as path dependency**: `libcosmic` is not yet published; use the local checkout.
+- **Servo pinned to the `v0.5.0` git tag**: not published on crates.io, so `servo` is a git
+  dependency on tag `v0.5.0`. Do not switch to a path dependency without a specific reason.
+- **libcosmic pinned by git revision**: `libcosmic` is not yet published; the `rev` in
+  `Cargo.toml` must match `iced_wgpu`, which comes from the same repository.
 - **GPU rendering primary**: `GpuRenderingContext` (custom, in `src/rendering.rs`) uses
   surfman with `connection.create_adapter()` (real GPU) and a `SurfaceType::Generic` surface
   — no window handle required. Falls back automatically to `SoftwareRenderingContext` if the
