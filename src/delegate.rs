@@ -615,17 +615,23 @@ fn convert_pixels(width: u32, height: u32, format: PixelFormat, data: &[u8]) -> 
     let rgba: Vec<u8> = match format {
         PixelFormat::K8 => data.iter().flat_map(|&v| [v, v, v, 255]).collect(),
         PixelFormat::KA8 => data
-            .chunks_exact(2)
-            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[k, a]| [k, k, k, a])
             .collect(),
         PixelFormat::RGB8 => data
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 255])
             .collect(),
         PixelFormat::RGBA8 => data.to_vec(),
         PixelFormat::BGRA8 => data
-            .chunks_exact(4)
-            .flat_map(|p| [p[2], p[1], p[0], p[3]])
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|&[b, g, r, a]| [r, g, b, a])
             .collect(),
     };
     RgbaImage::from_raw(width, height, rgba)
