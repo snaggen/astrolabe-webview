@@ -75,6 +75,137 @@ fn gamepads() -> Option<Rc<crate::gamepad::CosmicGamepadDelegate>> {
     })
 }
 
+/// Start the shared Servo engine before the first tab exists.
+///
+/// Building the engine spawns the constellation and the first script thread,
+/// none of which need a rendering context. Calling this as early as possible —
+/// before the window and its GPU context are created — lets that work overlap
+/// with the rest of the application's start-up. [`ServoState::new`] calls it for
+/// you; call it yourself only to start even earlier. Repeated calls are no-ops.
+///
+/// Settings that are only read at start-up — [`set_profile_dir`] and
+/// [`set_devtools_enabled`] — must be applied before this call.
+///
+/// With the `gl-media` feature the call does nothing: the GL video handles come
+/// from the first tab's rendering context and must be registered before the
+/// engine starts, so the engine cannot start ahead of that context.
+///
+/// ```no_run
+/// cosmic_webview::start_engine();
+/// ```
+pub fn start_engine() {
+    if cfg!(feature = "gl-media") {
+        return;
+    }
+    engine(None);
+}
+
+/// Returns handles to the shared engine, starting it on the first call.
+///
+/// `rendering_ctx` supplies the GL handles for accelerated media, which have to
+/// be registered before the engine starts. Pass `None` to start without them.
+fn engine(
+    rendering_ctx: Option<&ActiveRenderingContext>,
+) -> (
+    servo::Servo,
+    IcedEventLoopWaker,
+    async_channel::Receiver<()>,
+) {
+    ENGINE.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if let Some((servo, waker, rx)) = borrow.as_ref() {
+            return (servo.clone(), waker.clone(), rx.clone());
+        }
+
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let (waker, rx) = IcedEventLoopWaker::new();
+        let use_gl_media = register_gl_accelerated_media(rendering_ctx);
+        let preferences = engine_preferences(use_gl_media);
+        // The WebDriver server resets preferences between sessions, so it needs
+        // the same set the browser started with.
+        #[cfg(feature = "webdriver")]
+        WEBDRIVER_PREFERENCES.with(|cell| *cell.borrow_mut() = Some(preferences.clone()));
+
+        let opts = Opts {
+            config_dir: PROFILE_DIR.with(|d| d.borrow().clone()),
+            ..Default::default()
+        };
+        let servo = ServoBuilder::default()
+            .opts(opts)
+            .preferences(preferences)
+            .event_loop_waker(Box::new(waker.clone()))
+            .build();
+        servo.setup_logging();
+        servo.set_delegate(Rc::new(CosmicServoDelegate));
+        // Create the shared user-content manager now so every WebView (including
+        // engine-created popups) injects the same scripts/CSS.
+        init_user_content(&servo);
+
+        *borrow = Some((servo.clone(), waker.clone(), rx.clone()));
+        (servo, waker, rx)
+    })
+}
+
+/// Hands Servo the GL handles for hardware video decoding, returning whether it
+/// should decode into shared GL textures rather than uploading CPU frames.
+///
+/// The handles come from the first tab's GPU context; the GStreamer pipelines
+/// create their own contexts shared with it, so the per-frame readback/dmabuf
+/// paths are unaffected. GL video decoding is opt-in (`gl-media` feature):
+/// Servo currently composites GStreamer GL textures upside down. See the
+/// feature comment in Cargo.toml.
+fn register_gl_accelerated_media(rendering_ctx: Option<&ActiveRenderingContext>) -> bool {
+    let handles = cfg!(feature = "gl-media")
+        .then(|| rendering_ctx?.media_gl_handles())
+        .flatten();
+    let Some((display, api, context)) = handles else {
+        return false;
+    };
+    servo::Servo::initialize_gl_accelerated_media(display, api, context);
+    true
+}
+
+/// Builds the engine preferences from the process-wide settings.
+fn engine_preferences(use_gl_media: bool) -> Preferences {
+    let web_fonts = WEB_FONTS.with(|f| f.borrow().clone()).unwrap_or_default();
+    let devtools_port = DEVTOOLS_PORT.with(Cell::get);
+    Preferences {
+        // Decode video into GL textures shared with the rendering context
+        // instead of CPU frame upload. Only effective when
+        // initialize_gl_accelerated_media ran.
+        media_glvideo_enabled: use_gl_media,
+        // Permission-gated DOM APIs are off by default in Servo. Only enable
+        // those that actually route through the embedder's permission prompt
+        // (`EmbedderMsg::PromptPermission`): notifications, persistent storage,
+        // and `navigator.permissions.request()`. Other features are
+        // deliberately left off: Servo's getUserMedia grants camera/microphone
+        // WITHOUT any prompt (a privacy hole), geolocation's prompt step is
+        // unimplemented (it hangs), and Bluetooth is gated by a Cargo feature
+        // that is not built in. Re-enable each here once Servo wires it to the
+        // permission prompt.
+        dom_notification_enabled: true,
+        dom_permissions_enabled: true,
+        dom_storage_manager_api_enabled: true,
+        // Bluetooth routes through the embedder's device-selection dialog
+        // (built with the `bluetooth` Cargo feature).
+        dom_bluetooth_enabled: true,
+        // getUserMedia is an explicit opt-in (auto-grants, no prompt).
+        dom_webrtc_enabled: WEBRTC_ENABLED.with(Cell::get),
+        // Remote devtools server (Firefox Remote Debugging Protocol).
+        devtools_server_enabled: devtools_port.is_some(),
+        devtools_server_listen_address: devtools_port
+            .map(|p| format!("127.0.0.1:{p}"))
+            .unwrap_or_default(),
+        // Default web-content fonts (empty family = Servo default).
+        fonts_serif: web_fonts.serif,
+        fonts_sans_serif: web_fonts.sans_serif,
+        fonts_monospace: web_fonts.monospace,
+        fonts_default_size: web_fonts.default_size,
+        fonts_default_monospace_size: web_fonts.monospace_size,
+        ..Default::default()
+    }
+}
+
 /// The screen and window geometry reported to web content, in physical pixels.
 ///
 /// Backs `window.screen`, `window.screenLeft`/`screenTop` and
@@ -332,8 +463,9 @@ fn apply_user_content(state: &mut UserContentState) {
 
 /// Enable the Servo remote devtools server on the given port.
 ///
-/// Call once before the first [`ServoState::new`]; the engine is initialised
-/// only once per process, so later calls have no effect.
+/// Call once before the engine starts — that is, before [`start_engine`] or the
+/// first [`ServoState::new`]. The engine is initialised only once per process,
+/// so later calls have no effect.
 ///
 /// The server implements the Firefox Remote Debugging Protocol. Once running,
 /// connect from Firefox via *Remote Debugging → Connect to localhost:PORT*.
@@ -344,8 +476,9 @@ pub fn set_devtools_enabled(port: u16) {
 
 /// Configure the directory where Servo stores persistent data (cookies, HSTS, auth caches).
 ///
-/// Call this once before the first [`ServoState::new`]. If the engine has already
-/// been initialised, this call has no effect.
+/// Call this once before the engine starts — that is, before [`start_engine`] or
+/// the first [`ServoState::new`]. If the engine has already been initialised,
+/// this call has no effect.
 pub fn set_profile_dir(dir: PathBuf) {
     PROFILE_DIR.with(|d| *d.borrow_mut() = Some(dir));
 }
@@ -508,6 +641,9 @@ impl ServoState {
         size: PhysicalSize<u32>,
         scale_factor: f32,
     ) -> (Self, async_channel::Receiver<()>) {
+        // Start the engine first so its constellation and script threads spin
+        // up while the rendering context is still being created.
+        start_engine();
         let rendering_ctx = ActiveRenderingContext::create(size);
         Self::new_with_context(initial_url, rendering_ctx, scale_factor)
     }
@@ -520,90 +656,7 @@ impl ServoState {
         rendering_ctx: ActiveRenderingContext,
         scale_factor: f32,
     ) -> (Self, async_channel::Receiver<()>) {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-        // Get the shared engine, initialising it on the first call.
-        let (servo, waker, rx) = ENGINE.with(|cell| {
-            let mut borrow = cell.borrow_mut();
-            if let Some((servo, waker, rx)) = borrow.as_ref() {
-                (servo.clone(), waker.clone(), rx.clone())
-            } else {
-                let (waker, rx) = IcedEventLoopWaker::new();
-                // GL-accelerated media must be registered before the engine is
-                // built. The handles come from the first tab's GPU context; the
-                // GStreamer pipelines create their own contexts shared with it,
-                // so the per-frame readback/dmabuf paths are unaffected. Without
-                // handles (software rendering) media decodes via CPU upload.
-                // GL video decoding is opt-in (`gl-media` feature): Servo
-                // currently composites GStreamer GL textures upside down.
-                // See the feature comment in Cargo.toml.
-                let gl_media = cfg!(feature = "gl-media")
-                    .then(|| rendering_ctx.media_gl_handles())
-                    .flatten();
-                let use_gl_media = gl_media.is_some();
-                if let Some((display, api, context)) = gl_media {
-                    servo::Servo::initialize_gl_accelerated_media(display, api, context);
-                }
-                let opts = Opts {
-                    config_dir: PROFILE_DIR.with(|d| d.borrow().clone()),
-                    ..Default::default()
-                };
-                let web_fonts = WEB_FONTS.with(|f| f.borrow().clone()).unwrap_or_default();
-                let devtools_port = DEVTOOLS_PORT.with(Cell::get);
-                let preferences = Preferences {
-                    // Decode video into GL textures shared with the rendering
-                    // context instead of CPU frame upload. Only effective when
-                    // initialize_gl_accelerated_media ran above.
-                    media_glvideo_enabled: use_gl_media,
-                    // Permission-gated DOM APIs are off by default in Servo. Only
-                    // enable those that actually route through the embedder's
-                    // permission prompt (`EmbedderMsg::PromptPermission`):
-                    // notifications, persistent storage, and `navigator
-                    // .permissions.request()`. Other features are deliberately
-                    // left off: Servo's getUserMedia grants camera/microphone
-                    // WITHOUT any prompt (a privacy hole), geolocation's prompt
-                    // step is unimplemented (it hangs), and Bluetooth is gated by
-                    // a Cargo feature that is not built in. Re-enable each here
-                    // once Servo wires it to the permission prompt.
-                    dom_notification_enabled: true,
-                    dom_permissions_enabled: true,
-                    dom_storage_manager_api_enabled: true,
-                    // Bluetooth routes through the embedder's device-selection
-                    // dialog (built with the `bluetooth` Cargo feature).
-                    dom_bluetooth_enabled: true,
-                    // getUserMedia is an explicit opt-in (auto-grants, no prompt).
-                    dom_webrtc_enabled: WEBRTC_ENABLED.with(Cell::get),
-                    // Remote devtools server (Firefox Remote Debugging Protocol).
-                    devtools_server_enabled: devtools_port.is_some(),
-                    devtools_server_listen_address: devtools_port
-                        .map(|p| format!("127.0.0.1:{p}"))
-                        .unwrap_or_default(),
-                    // Default web-content fonts (empty family = Servo default).
-                    fonts_serif: web_fonts.serif,
-                    fonts_sans_serif: web_fonts.sans_serif,
-                    fonts_monospace: web_fonts.monospace,
-                    fonts_default_size: web_fonts.default_size,
-                    fonts_default_monospace_size: web_fonts.monospace_size,
-                    ..Default::default()
-                };
-                // The WebDriver server resets preferences between sessions, so
-                // it needs the same set the browser started with.
-                #[cfg(feature = "webdriver")]
-                WEBDRIVER_PREFERENCES.with(|cell| *cell.borrow_mut() = Some(preferences.clone()));
-                let servo = ServoBuilder::default()
-                    .opts(opts)
-                    .preferences(preferences)
-                    .event_loop_waker(Box::new(waker.clone()))
-                    .build();
-                servo.setup_logging();
-                servo.set_delegate(Rc::new(CosmicServoDelegate));
-                // Create the shared user-content manager now so every WebView
-                // (including engine-created popups) injects the same scripts/CSS.
-                init_user_content(&servo);
-                *borrow = Some((servo.clone(), waker.clone(), rx.clone()));
-                (servo, waker, rx)
-            }
-        });
+        let (servo, waker, rx) = engine(Some(&rendering_ctx));
 
         let shared = SharedState::new();
         let frame = WebViewFrame::new();

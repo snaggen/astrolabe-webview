@@ -41,7 +41,7 @@ pub use state::{
     DevtoolsRequest, ScreenGeometry, ServoState, ThemePreference, UserContent, UserContentItem,
     WebFonts, clear_all_cookies, clear_site_data, list_site_data, set_camera_microphone_enabled,
     set_devtools_enabled, set_profile_dir, set_screen_geometry, set_user_content, set_web_fonts,
-    shutdown_engine, take_devtools_request,
+    shutdown_engine, start_engine, take_devtools_request,
 };
 pub use waker::IcedEventLoopWaker;
 pub use widget::{WebViewWidget, cursor_interaction};

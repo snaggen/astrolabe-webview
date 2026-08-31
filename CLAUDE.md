@@ -37,6 +37,11 @@ This crate lives at `~/src/cosmic-webview/`. Servo is a git dependency pinned to
   sampled directly by wgpu — no CPU readback (`src/gpu_share.rs`, `src/delegate.rs`). Falls back
   at runtime to CPU readback (`glReadPixels` + `Queue::write_texture`) whenever any step is
   unsupported.
+- **Engine starts before the rendering context**: `ServoBuilder::build` needs no rendering
+  context, so `start_engine` runs first and the constellation/script-thread startup overlaps
+  with GPU context creation — the same reordering servoshell made in Servo 0.5.0. The
+  `gl-media` feature inverts the dependency (GL video handles must be registered before the
+  engine starts), so `start_engine` is a no-op there.
 - **Servo is `!Send`**: All Servo code runs on the main thread. The iced `Subscription` uses
   an `async_channel` to signal `Message::ServoWake`; `App::update` calls
   `servo.spin_event_loop()`.

@@ -99,6 +99,11 @@ fn build_servo_menu(items: &[ContextMenuItem]) -> Vec<menu::Tree<Message>> {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Start the web engine before the window exists, so Servo's constellation
+    // and script threads come up while libcosmic builds the window and its GPU
+    // context. Start-up-only settings (set_profile_dir, set_devtools_enabled)
+    // would have to be applied before this call.
+    cosmic_webview::start_engine();
     let settings = Settings::default().size((1280, 800).into());
     libcosmic::app::run::<Browser>(settings, ())?;
     Ok(())
