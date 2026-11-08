@@ -509,6 +509,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "astrolabe-webview"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "ash",
+ "async-channel",
+ "content-security-policy",
+ "crossbeam-channel",
+ "dpi 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "euclid",
+ "gilrs",
+ "gleam",
+ "glow 0.17.0",
+ "iced_wgpu",
+ "khronos-egl",
+ "libcosmic",
+ "rustls",
+ "servo",
+ "servo-webdriver-server",
+ "surfman",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1825,31 +1850,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "cosmic-webview"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "ash",
- "async-channel",
- "content-security-policy",
- "crossbeam-channel",
- "dpi 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "euclid",
- "gilrs",
- "gleam",
- "glow 0.17.0",
- "iced_wgpu",
- "khronos-egl",
- "libcosmic",
- "rustls",
- "servo",
- "servo-webdriver-server",
- "surfman",
- "tracing",
- "url",
 ]
 
 [[package]]

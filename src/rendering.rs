@@ -33,7 +33,7 @@ pub(crate) type MediaGlHandles = (
 /// # Example
 ///
 /// ```no_run
-/// use cosmic_webview::GpuRenderingContext;
+/// use astrolabe_webview::GpuRenderingContext;
 /// use dpi::PhysicalSize;
 ///
 /// let ctx = GpuRenderingContext::new(PhysicalSize::new(800_u32, 600)).unwrap();
@@ -454,7 +454,7 @@ fn read_pixels_from_fbo(gl: &Rc<dyn Gl>, fbo_id: u32, rect: DeviceIntRect) -> Op
 /// # Example
 ///
 /// ```no_run
-/// use cosmic_webview::ActiveRenderingContext;
+/// use astrolabe_webview::ActiveRenderingContext;
 /// use dpi::PhysicalSize;
 ///
 /// let ctx = ActiveRenderingContext::create(PhysicalSize::new(800_u32, 600));

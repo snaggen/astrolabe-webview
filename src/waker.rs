@@ -9,7 +9,7 @@ use async_channel::Sender;
 /// # Example
 ///
 /// ```
-/// let (waker, rx) = cosmic_webview::IcedEventLoopWaker::new();
+/// let (waker, rx) = astrolabe_webview::IcedEventLoopWaker::new();
 /// // Give `waker` to ServoBuilder, poll `rx` in an iced Subscription.
 /// ```
 #[derive(Clone)]

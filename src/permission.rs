@@ -13,7 +13,7 @@ use servo::PermissionFeature;
 /// discriminant.
 ///
 /// ```
-/// use cosmic_webview::{PermissionFeature, permission};
+/// use astrolabe_webview::{PermissionFeature, permission};
 /// assert!(permission::features_match(
 ///     PermissionFeature::Camera,
 ///     PermissionFeature::Camera,
@@ -33,7 +33,7 @@ pub fn features_match(a: PermissionFeature, b: PermissionFeature) -> bool {
 /// keys are stable across releases, so stored grants stay valid.
 ///
 /// ```
-/// use cosmic_webview::{PermissionFeature, permission};
+/// use astrolabe_webview::{PermissionFeature, permission};
 /// assert_eq!(permission::feature_key(PermissionFeature::Geolocation), "geolocation");
 /// ```
 pub fn feature_key(feature: PermissionFeature) -> &'static str {

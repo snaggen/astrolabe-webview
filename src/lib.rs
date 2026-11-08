@@ -4,7 +4,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use cosmic_webview::ServoState;
+//! use astrolabe_webview::ServoState;
 //! use url::Url;
 //! use dpi::PhysicalSize;
 //!

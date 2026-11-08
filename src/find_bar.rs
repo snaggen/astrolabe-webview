@@ -51,7 +51,7 @@ pub enum FindBarMsg {
 /// ```ignore
 /// // In view():
 /// if let Some(state) = &tab.find_bar {
-///     let bar = cosmic_webview::FindBar::view(state).map(Message::FindBar);
+///     let bar = astrolabe_webview::FindBar::view(state).map(Message::FindBar);
 ///     // Insert `bar` between toolbar and webview in your layout.
 /// }
 ///

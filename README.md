@@ -1,10 +1,11 @@
-# cosmic-webview
+# astrolabe-webview
 
 > **Note:** This library has no official connection to [System76](https://system76.com/) or the
-> [COSMIC Desktop Environment](https://github.com/pop-os/cosmic-epoch). The name is lazy naming,
-> nothing more.
+> [COSMIC Desktop Environment](https://github.com/pop-os/cosmic-epoch). It was originally called
+> `cosmic-webview` out of lazy naming, nothing more, and was renamed to make that clear.
 >
-> This is a personal, experimental project. See [cosmic-web](https://codeberg.org/snaggen/cosmic-web) for context.
+> This is a personal, experimental project. It is the engine widget behind the
+> [Astrolabe](https://github.com/snaggen/astrolabe) browser; see that project for context.
 
 A [Servo](https://servo.org/)-based WebView widget for applications built on the
 [libcosmic](https://github.com/pop-os/libcosmic) UI toolkit (iced + wgpu).
@@ -26,14 +27,14 @@ A [Servo](https://servo.org/)-based WebView widget for applications built on the
 ## Quick start
 
 ```rust
-use cosmic_webview::{ServoState, WebViewWidget, IcedEventLoopWaker};
+use astrolabe_webview::{ServoState, WebViewWidget, IcedEventLoopWaker};
 use dpi::PhysicalSize;
 use url::Url;
 
 // Before the first ServoState, configure optional globals:
-cosmic_webview::set_profile_dir(data_dir);   // cookie persistence
-cosmic_webview::set_web_fonts(fonts);         // custom fonts
-cosmic_webview::set_devtools_enabled(6080);   // remote devtools (optional)
+astrolabe_webview::set_profile_dir(data_dir);   // cookie persistence
+astrolabe_webview::set_web_fonts(fonts);         // custom fonts
+astrolabe_webview::set_devtools_enabled(6080);   // remote devtools (optional)
 
 // Create a WebView (call once per tab):
 let url = Url::parse("https://example.com").unwrap();

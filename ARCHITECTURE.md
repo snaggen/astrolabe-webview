@@ -1,6 +1,6 @@
 # Architecture
 
-`cosmic-webview` embeds the [Servo](https://servo.org) web engine as a widget
+`astrolabe-webview` embeds the [Servo](https://servo.org) web engine as a widget
 for [libcosmic](https://github.com/pop-os/libcosmic) (iced) applications. It
 owns the glue between three worlds that do not naturally talk to each other:
 Servo's OpenGL rendering, iced's wgpu compositor, and the iced event loop.
@@ -8,7 +8,7 @@ Servo's OpenGL rendering, iced's wgpu compositor, and the iced event loop.
 ## Component map
 
 ```
-┌─────────────────────────── embedding app (e.g. cosmic-web) ──────────────────────────┐
+┌─────────────────────────── embedding app (e.g. astrolabe)  ──────────────────────────┐
 │  view():  WebViewWidget::new(servo.frame())          update(): servo.spin(), input   │
 └──────────────┬───────────────────────────────────────────────┬───────────────────────┘
                │                                               │

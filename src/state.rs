@@ -91,7 +91,7 @@ fn gamepads() -> Option<Rc<crate::gamepad::CosmicGamepadDelegate>> {
 /// engine starts, so the engine cannot start ahead of that context.
 ///
 /// ```no_run
-/// cosmic_webview::start_engine();
+/// astrolabe_webview::start_engine();
 /// ```
 pub fn start_engine() {
     if cfg!(feature = "gl-media") {
@@ -233,7 +233,7 @@ pub struct ScreenGeometry {
 /// the latest value on demand, so no reload is needed.
 ///
 /// ```no_run
-/// use cosmic_webview::{ScreenGeometry, set_screen_geometry};
+/// use astrolabe_webview::{ScreenGeometry, set_screen_geometry};
 /// use dpi::{PhysicalPosition, PhysicalSize};
 ///
 /// let screen = PhysicalSize::new(2560, 1440);
@@ -395,7 +395,7 @@ thread_local! {
 /// (reload open tabs to apply immediately).
 ///
 /// ```no_run
-/// use cosmic_webview::{UserContent, UserContentItem, set_user_content};
+/// use astrolabe_webview::{UserContent, UserContentItem, set_user_content};
 ///
 /// set_user_content(UserContent {
 ///     scripts: vec![UserContentItem {
@@ -605,7 +605,7 @@ pub fn clear_all_cookies() {
 /// # Example
 ///
 /// ```no_run
-/// use cosmic_webview::ServoState;
+/// use astrolabe_webview::ServoState;
 /// use dpi::PhysicalSize;
 /// use url::Url;
 ///
@@ -729,7 +729,7 @@ impl ServoState {
     /// the last value set.
     ///
     /// ```no_run
-    /// use cosmic_webview::{ServoState, Theme};
+    /// use astrolabe_webview::{ServoState, Theme};
     /// use url::Url;
     /// use dpi::PhysicalSize;
     ///
@@ -749,7 +749,7 @@ impl ServoState {
     /// changes (while `FollowSystem`) so pages keep following it.
     ///
     /// ```no_run
-    /// use cosmic_webview::{ServoState, ThemePreference};
+    /// use astrolabe_webview::{ServoState, ThemePreference};
     /// use url::Url;
     /// use dpi::PhysicalSize;
     ///
@@ -885,7 +885,7 @@ impl ServoState {
     /// # Example
     ///
     /// ```no_run
-    /// # use cosmic_webview::ServoState;
+    /// # use astrolabe_webview::ServoState;
     /// # use std::sync::Arc;
     /// # fn f(state: &ServoState) {
     /// // Block all image requests.

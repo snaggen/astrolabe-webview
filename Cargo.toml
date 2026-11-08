@@ -1,9 +1,9 @@
 [package]
-name = "cosmic-webview"
+name = "astrolabe-webview"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
-description = "Servo-based WebView widget for the COSMIC Desktop environment"
+description = "Servo-based WebView widget for libcosmic applications"
 license = "EUPL-1.2"
 
 [dependencies]

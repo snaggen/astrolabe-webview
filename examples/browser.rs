@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use cosmic_webview::{DialogMsg, ServoState, WebViewWidget};
+use astrolabe_webview::{DialogMsg, ServoState, WebViewWidget};
 use dpi::PhysicalSize;
 use libcosmic::app::{Core, Settings, Task};
 use libcosmic::executor;
@@ -103,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // and script threads come up while libcosmic builds the window and its GPU
     // context. Start-up-only settings (set_profile_dir, set_devtools_enabled)
     // would have to be applied before this call.
-    cosmic_webview::start_engine();
+    astrolabe_webview::start_engine();
     let settings = Settings::default().size((1280, 800).into());
     libcosmic::app::run::<Browser>(settings, ())?;
     Ok(())
@@ -231,13 +231,13 @@ impl libcosmic::Application for Browser {
         // Demonstrate user content (Fas 22): a script that runs at document-start
         // on every page, and a stylesheet applied as user-origin CSS. Set before
         // the first ServoState so the first page load already has them.
-        cosmic_webview::set_user_content(cosmic_webview::UserContent {
-            scripts: vec![cosmic_webview::UserContentItem {
-                source: "console.log('cosmic-webview userscript ran at document-start');"
+        astrolabe_webview::set_user_content(astrolabe_webview::UserContent {
+            scripts: vec![astrolabe_webview::UserContentItem {
+                source: "console.log('astrolabe-webview userscript ran at document-start');"
                     .to_owned(),
                 path: None,
             }],
-            stylesheets: vec![cosmic_webview::UserContentItem {
+            stylesheets: vec![astrolabe_webview::UserContentItem {
                 source: ":root { filter: hue-rotate(20deg); }".to_owned(),
                 path: None,
             }],
@@ -417,7 +417,7 @@ impl libcosmic::Application for Browser {
                 };
                 let window = to_physical(window_size);
                 let screen = monitor.map_or(window, to_physical);
-                cosmic_webview::set_screen_geometry(cosmic_webview::ScreenGeometry {
+                astrolabe_webview::set_screen_geometry(astrolabe_webview::ScreenGeometry {
                     screen_size: screen,
                     // No work area is available, so panels are not subtracted.
                     available_size: screen,

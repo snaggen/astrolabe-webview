@@ -1,4 +1,4 @@
-# cosmic-webview
+# astrolabe-webview
 
 A Servo-based WebView widget for the COSMIC Desktop environment. Uses Servo 0.5.0's embedding
 API for web rendering and libcosmic (iced + wgpu) as the UI toolkit.

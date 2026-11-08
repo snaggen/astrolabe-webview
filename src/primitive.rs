@@ -54,7 +54,7 @@ pub(crate) struct FrameInner {
 /// # Example
 ///
 /// ```
-/// use cosmic_webview::WebViewFrame;
+/// use astrolabe_webview::WebViewFrame;
 ///
 /// let frame = WebViewFrame::new();
 /// assert!(!frame.has_frame());

@@ -232,7 +232,7 @@ impl KineticScroll {
 /// # Example
 ///
 /// ```ignore
-/// use cosmic_webview::{ServoState, WebViewFrame, WebViewWidget};
+/// use astrolabe_webview::{ServoState, WebViewFrame, WebViewWidget};
 ///
 /// struct App {
 ///     servo: ServoState,
@@ -260,7 +260,7 @@ type ShortcutFilter<'a> = Box<dyn Fn(&keyboard::Key, keyboard::Modifiers) -> boo
 /// # Example
 ///
 /// ```no_run
-/// # use cosmic_webview::{InputEvent, ServoState, WebViewWidget};
+/// # use astrolabe_webview::{InputEvent, ServoState, WebViewWidget};
 /// # enum Message { Input(InputEvent), Resized(u32, u32) }
 /// # fn view(state: &ServoState) -> WebViewWidget<'_, Message> {
 /// WebViewWidget::new(state.frame())
@@ -660,7 +660,7 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
 ///
 /// ```ignore
 /// widget::mouse_area(some_wrapper(webview))
-///     .interaction(cosmic_webview::cursor_interaction(servo.cursor()))
+///     .interaction(astrolabe_webview::cursor_interaction(servo.cursor()))
 /// ```
 ///
 /// Diagonal resize cursors are approximated: NE/SW → `ResizingDiagonallyUp`,

@@ -82,7 +82,7 @@ pub fn prompt_value(dialog: &SimpleDialog) -> Option<&str> {
 ///
 /// ```
 /// # use servo::FilterPattern;
-/// # use cosmic_webview::dialogs::filter_globs;
+/// # use astrolabe_webview::dialogs::filter_globs;
 /// let patterns = vec![FilterPattern("png".to_owned()), FilterPattern("jpg".to_owned())];
 /// assert_eq!(filter_globs(&patterns), vec!["*.png", "*.jpg"]);
 /// ```
@@ -112,7 +112,7 @@ pub fn cancel_file_picker(picker: FilePicker) {
 ///
 /// ```
 /// # use servo::RgbColor;
-/// # use cosmic_webview::dialogs::rgb_to_hex;
+/// # use astrolabe_webview::dialogs::rgb_to_hex;
 /// let color = RgbColor { red: 255, green: 128, blue: 0 };
 /// assert_eq!(rgb_to_hex(color), "#ff8000");
 /// ```
@@ -190,7 +190,7 @@ pub fn flat_options(el: &SelectElement) -> Vec<FlatSelectOption> {
 ///
 /// ```
 /// # use servo::ContextMenuAction;
-/// # use cosmic_webview::dialogs::action_label;
+/// # use astrolabe_webview::dialogs::action_label;
 /// assert_eq!(action_label(ContextMenuAction::Copy), "Copy");
 /// assert_eq!(action_label(ContextMenuAction::Reload), "Reload");
 /// ```
