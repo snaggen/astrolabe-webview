@@ -76,8 +76,11 @@ pub(crate) fn mouse_event_to_servo(
     }
 }
 
-/// Standard CSS line height in pixels, used when the platform reports scroll in lines.
-pub(crate) const LINE_PX: f64 = 38.0;
+/// Pixels scrolled per mouse-wheel notch (the platform reports these in lines).
+///
+/// Wheel scrolling has no momentum, so each notch moves a full step, close to
+/// what GTK and Chromium scroll per notch on Linux.
+pub(crate) const WHEEL_NOTCH_PX: f64 = 100.0;
 
 /// Multiplier applied to touchpad pixel-delta scroll events.
 ///
@@ -89,8 +92,8 @@ pub(crate) const TOUCHPAD_SCROLL_SCALE: f64 = 3.0;
 fn scroll_to_wheel(delta: &mouse::ScrollDelta, point: WebViewPoint) -> InputEvent {
     let wheel_delta = match delta {
         mouse::ScrollDelta::Lines { x, y } => WheelDelta {
-            x: *x as f64 * LINE_PX,
-            y: *y as f64 * LINE_PX,
+            x: *x as f64 * WHEEL_NOTCH_PX,
+            y: *y as f64 * WHEEL_NOTCH_PX,
             z: 0.0,
             mode: WheelMode::DeltaPixel,
         },
@@ -301,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn wheel_lines_uses_line_px_multiplier() {
+    fn wheel_lines_scroll_a_notch_each() {
         let event = mouse::Event::WheelScrolled {
             delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
         };
@@ -310,7 +313,7 @@ mod tests {
             panic!("wrong variant")
         };
         assert_eq!(e.delta.mode, WheelMode::DeltaPixel);
-        assert!((e.delta.y - 38.0).abs() < 0.01);
+        assert!((e.delta.y - WHEEL_NOTCH_PX).abs() < 0.01);
     }
 
     #[test]

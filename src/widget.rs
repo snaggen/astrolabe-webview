@@ -29,7 +29,7 @@ struct WebViewState {
     swallow_release: Option<mouse::Button>,
 }
 
-/// Kinetic (momentum) scroll state for mouse-wheel and touchpad coast.
+/// Kinetic (momentum) scroll state for touchpad coast.
 ///
 /// The release velocity is measured as total displacement over a short trailing
 /// time window (see [`VELOCITY_WINDOW`]). This yields the true recent scroll
@@ -40,8 +40,10 @@ struct WebViewState {
 /// below [`MIN_SPEED`].
 ///
 /// Note: libinput does **not** implement kinetic coasting for applications —
-/// that is the responsibility of each widget. This struct handles both
-/// `Lines`-delta (mouse wheel) and `Pixels`-delta (touchpad) events.
+/// that is the responsibility of each widget. Only touchpad (`Pixels`-delta)
+/// events coast; a mouse wheel (`Lines`-delta) scrolls in plain steps, since a
+/// wheel that keeps going after the hand stops feels wrong. See
+/// [`kinetic_delta`].
 ///
 /// # Known limitation: cannot stop the coast by resting fingers on the trackpad
 ///
@@ -219,6 +221,21 @@ impl KineticScroll {
     /// Immediately stops any in-progress kinetic scroll and resets all state.
     fn stop(&mut self) {
         *self = KineticScroll::default();
+    }
+}
+
+/// The scroll distance a wheel event adds to the kinetic coast, in logical
+/// pixels, or `None` for events that must not coast.
+///
+/// Only touchpads coast. They report `Pixels` deltas; mouse wheels report
+/// `Lines`.
+fn kinetic_delta(delta: &mouse::ScrollDelta) -> Option<(f64, f64)> {
+    match delta {
+        mouse::ScrollDelta::Lines { .. } => None,
+        mouse::ScrollDelta::Pixels { x, y } => Some((
+            *x as f64 * input::TOUCHPAD_SCROLL_SCALE,
+            *y as f64 * input::TOUCHPAD_SCROLL_SCALE,
+        )),
     }
 }
 
@@ -581,24 +598,19 @@ impl<'a, Message> Widget<Message, libcosmic::Theme, libcosmic::Renderer>
             wstate.kinetic.stop();
         }
 
-        // Accumulate scroll velocity for kinetic coasting.  Both Lines (mouse
-        // wheel) and Pixels (touchpad) events are handled: libinput does not
-        // implement kinetic coasting itself — that is the widget's job.
+        // Touchpad scrolling feeds the kinetic coast (libinput leaves coasting
+        // to the widget). A mouse wheel stops any coast and scrolls in steps.
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && let Some(p) = cursor.position_in(bounds)
         {
-            let pos = input::servo_point(p, scale);
-            let (dx, dy) = match delta {
-                mouse::ScrollDelta::Lines { x, y } => {
-                    (*x as f64 * input::LINE_PX, *y as f64 * input::LINE_PX)
+            match kinetic_delta(delta) {
+                Some((dx, dy)) => {
+                    let pos = input::servo_point(p, scale);
+                    wstate.kinetic.on_wheel(dx, dy, pos, Instant::now());
+                    shell.request_redraw();
                 }
-                mouse::ScrollDelta::Pixels { x, y } => (
-                    *x as f64 * input::TOUCHPAD_SCROLL_SCALE,
-                    *y as f64 * input::TOUCHPAD_SCROLL_SCALE,
-                ),
-            };
-            wstate.kinetic.on_wheel(dx, dy, pos, Instant::now());
-            shell.request_redraw();
+                None => wstate.kinetic.stop(),
+            }
         }
 
         // Middle-click on a link opens it in a new tab. The press is consumed
@@ -777,6 +789,19 @@ mod tests {
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    #[test]
+    fn mouse_wheel_does_not_coast() {
+        let wheel = mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 };
+        assert_eq!(kinetic_delta(&wheel), None);
+    }
+
+    #[test]
+    fn touchpad_coasts_with_scaled_delta() {
+        let touchpad = mouse::ScrollDelta::Pixels { x: 2.0, y: -4.0 };
+        let scale = input::TOUCHPAD_SCROLL_SCALE;
+        assert_eq!(kinetic_delta(&touchpad), Some((2.0 * scale, -4.0 * scale)));
     }
 
     #[test]

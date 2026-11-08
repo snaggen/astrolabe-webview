@@ -14,7 +14,7 @@ A [Servo](https://servo.org/)-based WebView widget for applications built on the
 
 - `ServoState` — manages the Servo engine and a single WebView instance
 - `WebViewWidget` — iced widget that renders the WebView via wgpu (GPU path or software fallback)
-- Kinetic (momentum) scrolling, HiDPI, cursor and context-menu integration
+- Touchpad kinetic (momentum) scrolling, HiDPI, cursor and context-menu integration
 - Cookie and session data persistence
 - HTML5 media via GStreamer
 - Permission request callbacks (storage, camera/mic)
