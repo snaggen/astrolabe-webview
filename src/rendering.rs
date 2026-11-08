@@ -174,31 +174,34 @@ impl GpuRenderingContext {
     #[cfg(target_os = "linux")]
     fn media_gl_handles(&self) -> Option<MediaGlHandles> {
         use servo::{MediaGlApi, MediaGlContext, MediaNativeDisplay};
-        use surfman::multi::connection::NativeConnection;
-        use surfman::multi::context::NativeContext;
+        use surfman::multi::connection::Connection;
+        use surfman::multi::context::Context;
+        use surfman::multi::device::Device;
 
         let device = self.device.borrow();
         let context = self.media_context.borrow();
         let context = context.as_ref()?;
 
-        let media_context = match device.native_context(context) {
-            NativeContext::Default(NativeContext::Default(native)) => {
-                MediaGlContext::Egl(native.egl_context as usize)
-            }
-            NativeContext::Default(NativeContext::Alternate(native)) => {
-                MediaGlContext::Egl(native.egl_context as usize)
-            }
+        let media_context = match (&*device, context) {
+            (
+                Device::Default(Device::Default(device)),
+                Context::Default(Context::Default(context)),
+            ) => MediaGlContext::Egl(device.native_context(context).egl_context as usize),
+            (
+                Device::Default(Device::Alternate(device)),
+                Context::Default(Context::Alternate(context)),
+            ) => MediaGlContext::Egl(device.native_context(context).egl_context as usize),
             // GLX context — the GStreamer GL path is not wired up for it here.
-            NativeContext::Alternate(_) => return None,
+            _ => return None,
         };
-        let media_display = match device.connection().native_connection() {
-            surfman::NativeConnection::Default(NativeConnection::Default(connection)) => {
-                MediaNativeDisplay::Egl(connection.0 as usize)
+        let media_display = match device.connection() {
+            Connection::Default(Connection::Default(connection)) => {
+                MediaNativeDisplay::Egl(connection.native_connection().0 as usize)
             }
-            surfman::NativeConnection::Default(NativeConnection::Alternate(connection)) => {
-                MediaNativeDisplay::X11(connection.x11_display as usize)
+            Connection::Default(Connection::Alternate(connection)) => {
+                MediaNativeDisplay::X11(connection.native_connection().x11_display as usize)
             }
-            surfman::NativeConnection::Alternate(_) => return None,
+            Connection::Alternate(_) => return None,
         };
 
         let descriptor = device.context_descriptor(context);

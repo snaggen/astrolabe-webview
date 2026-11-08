@@ -15,8 +15,7 @@ use libcosmic::prelude::*;
 use libcosmic::widget;
 use libcosmic::widget::menu::{self, action::MenuAction};
 use servo::{
-    ContextMenu, ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl,
-    InputEvent,
+    ClipboardAction, ContextMenu, ContextMenuAction, ContextMenuItem, EmbedderControl, InputEvent,
 };
 use url::Url;
 
@@ -380,12 +379,12 @@ impl libcosmic::Application for Browser {
             Message::CopySelection => {
                 self.dismiss_context_menu();
                 self.servo
-                    .send_input(InputEvent::EditingAction(EditingActionEvent::Copy));
+                    .send_input(InputEvent::EditingAction(ClipboardAction::Copy));
             }
             Message::Paste => {
                 self.dismiss_context_menu();
                 self.servo
-                    .send_input(InputEvent::EditingAction(EditingActionEvent::Paste));
+                    .send_input(InputEvent::EditingAction(ClipboardAction::Paste));
             }
             Message::ServoContextMenuSelected(action) => {
                 // Let Servo execute the action (copy link, open image, etc.)

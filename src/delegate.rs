@@ -566,7 +566,7 @@ impl WebViewDelegate for WebViewDelegateImpl {
         // Extract everything we need before consuming `load` via intercept().
         let (url, resource_type, source) = {
             let req = load.request();
-            let url = req.url.clone();
+            let url = req.url.clone().into_url();
             let resource_type = destination_to_resource_type(&req.destination);
             let source = req.referrer_url.as_ref().map(|u| u.to_string());
             (url, resource_type, source)

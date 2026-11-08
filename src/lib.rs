@@ -49,8 +49,8 @@ pub use widget::{WebViewWidget, cursor_interaction};
 // Re-export servo types that embedding applications need directly.
 // This removes the need for embedders to add servo as a direct dependency.
 pub use servo::{
-    AllowOrDenyRequest, BluetoothDeviceDescription, BluetoothDeviceSelectionRequest, ContextMenu,
-    ContextMenuAction, ContextMenuItem, EditingActionEvent, EmbedderControl, InputEvent,
+    AllowOrDenyRequest, BluetoothDeviceDescription, BluetoothDeviceSelectionRequest,
+    ClipboardAction, ContextMenu, ContextMenuAction, ContextMenuItem, EmbedderControl, InputEvent,
     LoadStatus, MediaMetadata, MediaPositionState, MediaSessionActionType,
     MediaSessionPlaybackState, Notification, PermissionFeature, PermissionRequest, SiteData, Theme,
 };

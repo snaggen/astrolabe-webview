@@ -19,9 +19,9 @@ use servo::{
 /// Converts an iced mouse button to a Servo [`ServoMouseButton`].
 pub(crate) fn servo_mouse_button(button: mouse::Button) -> ServoMouseButton {
     match button {
-        mouse::Button::Left => ServoMouseButton::Left,
-        mouse::Button::Middle => ServoMouseButton::Middle,
-        mouse::Button::Right => ServoMouseButton::Right,
+        mouse::Button::Left => ServoMouseButton::Primary,
+        mouse::Button::Middle => ServoMouseButton::Auxiliary,
+        mouse::Button::Right => ServoMouseButton::Secondary,
         mouse::Button::Back => ServoMouseButton::Back,
         mouse::Button::Forward => ServoMouseButton::Forward,
         mouse::Button::Other(n) => ServoMouseButton::Other(n),
@@ -267,7 +267,7 @@ mod tests {
             panic!("wrong variant")
         };
         assert_eq!(e.action, MouseButtonAction::Down);
-        assert_eq!(e.button, ServoMouseButton::Left);
+        assert_eq!(e.button, ServoMouseButton::Primary);
         // servo_point multiplies by scale, so (100*2, 50*2) = (200, 100)
         if let servo::WebViewPoint::Device(pt) = e.point {
             assert!((pt.x - 200.0).abs() < 0.01);

@@ -7,20 +7,24 @@ description = "Servo-based WebView widget for libcosmic applications"
 license = "EUPL-1.2"
 
 [dependencies]
-# Web engine — servo is not published on crates.io; pinned to the v0.5.0 release
-# tag. Switch to version = "0.5.0" from crates.io once published.
+# Web engine.
 # media-gstreamer selects Servo's GStreamer media backend (HTML5 <video>/<audio>);
 # without it Servo silently falls back to a dummy backend that plays nothing.
 # bluetooth enables the Web Bluetooth DOM API; native-bluetooth adds the real
 # BLE backend (btleplug → BlueZ/D-Bus) instead of the mock used for tests.
 # clipboard installs Servo's DefaultClipboardDelegate (arboard); without it
 # copy/paste and navigator.clipboard silently use a process-local string.
-servo = { git = "https://github.com/servo/servo", tag = "v0.5.0", default-features = false, features = ["js_jit", "vello", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard"] }
+# devtools, webgl, subtlecrypto and brotli-compression-stream were always built
+# in up to Servo 0.5; since 0.6 they are features and default-features = false
+# drops them, silently disabling the devtools server, WebGL and crypto.subtle.
+# webgpu matches servoshell. vello (GPU canvas) is left out, as in servoshell:
+# canvas then uses vello_cpu, and servo-canvas 0.8.0 does not build with it.
+servo = { version = "=0.8.0", default-features = false, features = ["js_jit", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard", "devtools", "webgl", "webgpu", "subtlecrypto", "brotli-compression-stream"] }
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions
-# must be compatible with what servo 0.5.0 uses internally (surfman 0.13.x).
-surfman      = { version = "0.13", features = ["chains"] }
+# must be compatible with what servo 0.8.0 uses internally (surfman 0.14.x).
+surfman      = "0.14"
 gleam        = "0.15"
 glow         = "0.17.0"
 
@@ -33,7 +37,7 @@ iced_wgpu    = { git = "https://github.com/pop-os/libcosmic", rev = "c003a58fff6
 async-channel = "2"
 
 # CSP Destination enum, used to map Servo resource types to adblock type strings.
-content-security-policy = "0.8.1"
+content-security-policy = "0.9"
 
 # URL parsing and physical pixel sizes
 url = "2.5"
@@ -51,11 +55,11 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] 
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = { version = "0.38", optional = true }
 khronos-egl = { version = "6", features = ["dynamic"], optional = true }
-# Gamepad input for the `gamepad` feature. Matches the version Servo v0.5.0 uses.
+# Gamepad input for the `gamepad` feature; Servo leaves reading devices to the embedder.
 gilrs        = { version = "0.11.1", optional = true }
-# WebDriver server for the `webdriver` feature. Must track the servo tag above:
-# it is part of the same workspace and shares its internal types.
-webdriver_server = { package = "servo-webdriver-server", git = "https://github.com/servo/servo", tag = "v0.5.0", optional = true }
+# WebDriver server for the `webdriver` feature. Must match the servo version
+# above: it is part of the same workspace and shares its internal types.
+webdriver_server = { package = "servo-webdriver-server", version = "=0.8.0", optional = true }
 crossbeam-channel = { version = "0.5", optional = true }
 # Not used directly: this pulls in arboard's wayland-data-control feature so
 # Servo's clipboard delegate (which depends on arboard) uses the native Wayland
