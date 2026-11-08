@@ -20,6 +20,9 @@ license = "EUPL-1.2"
 # webgpu matches servoshell. vello (GPU canvas) is left out, as in servoshell:
 # canvas then uses vello_cpu, and servo-canvas 0.8.0 does not build with it.
 servo = { version = "=0.8.0", default-features = false, features = ["js_jit", "baked-in-resources", "media-gstreamer", "bluetooth", "native-bluetooth", "clipboard", "devtools", "webgl", "webgpu", "subtlecrypto", "brotli-compression-stream"] }
+# Stylo's own feature switches. Servo forwards only some of them from its
+# Preferences; :has() is not among them. Must be the version servo uses.
+stylo_static_prefs = "=0.23.0"
 
 # surfman, gleam and glow are used directly in rendering.rs to implement
 # servo::RenderingContext with a GPU adapter and no window handle. Versions

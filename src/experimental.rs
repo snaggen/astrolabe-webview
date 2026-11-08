@@ -5,6 +5,9 @@
 //! always enables, WebRTC (see [`crate::set_camera_microphone_enabled`]),
 //! geolocation (its permission prompt is unimplemented and hangs) and WebXR
 //! layers (WebXR is not built in).
+//!
+//! One feature, [`ExperimentalFeature::HasSelector`], is a switch in Stylo that
+//! Servo does not expose as a preference; it is set in Stylo directly.
 
 use std::cell::RefCell;
 
@@ -41,6 +44,9 @@ pub enum ExperimentalFeature {
     FontFace,
     /// Variable fonts.
     FontVariations,
+    /// The CSS `:has()` selector. Matching works, but styles are not updated
+    /// when later DOM changes would change what `:has()` matches.
+    HasSelector,
     /// IndexedDB client-side storage.
     IndexedDb,
     /// `IntersectionObserver`, used for lazy loading and scroll effects.
@@ -86,6 +92,7 @@ impl ExperimentalFeature {
         ExperimentalFeature::ExecCommand,
         ExperimentalFeature::FontFace,
         ExperimentalFeature::FontVariations,
+        ExperimentalFeature::HasSelector,
         ExperimentalFeature::IndexedDb,
         ExperimentalFeature::IntersectionObserver,
         ExperimentalFeature::LargestContentfulPaint,
@@ -101,7 +108,8 @@ impl ExperimentalFeature {
         ExperimentalFeature::WebGpu,
     ];
 
-    /// The Servo preference that switches this feature on.
+    /// The Servo preference that switches this feature on, or for a Stylo
+    /// switch a name in the same style.
     ///
     /// Also a stable identifier for storing the user's choice.
     ///
@@ -128,6 +136,7 @@ impl ExperimentalFeature {
             ExperimentalFeature::ExecCommand => "dom_exec_command_enabled",
             ExperimentalFeature::FontFace => "dom_fontface_enabled",
             ExperimentalFeature::FontVariations => "layout_css_font_variations_enabled",
+            ExperimentalFeature::HasSelector => "layout_css_has_selector_enabled",
             ExperimentalFeature::IndexedDb => "dom_indexeddb_enabled",
             ExperimentalFeature::IntersectionObserver => "dom_intersection_observer_enabled",
             ExperimentalFeature::LargestContentfulPaint => "largest_contentful_paint_enabled",
@@ -142,6 +151,11 @@ impl ExperimentalFeature {
             ExperimentalFeature::WebGl2 => "dom_webgl2_enabled",
             ExperimentalFeature::WebGpu => "dom_webgpu_enabled",
         }
+    }
+
+    /// Whether this feature is a Stylo switch rather than a Servo preference.
+    fn is_stylo_switch(self) -> bool {
+        self == ExperimentalFeature::HasSelector
     }
 
     /// The feature whose [`pref_name`](Self::pref_name) is `name`, if any.
@@ -178,16 +192,32 @@ pub fn set_experimental_feature(feature: ExperimentalFeature, enabled: bool) {
             list.push(feature);
         }
     });
+    if feature.is_stylo_switch() {
+        set_stylo_switch(feature, enabled);
+        return;
+    }
     crate::state::with_engine(|servo| {
         servo.set_preference(feature.pref_name(), PrefValue::Bool(enabled));
     });
+}
+
+/// Sets a feature that lives in Stylo. Stylo's switches are process-wide and
+/// read whenever a stylesheet is parsed, so they need no running engine.
+fn set_stylo_switch(feature: ExperimentalFeature, enabled: bool) {
+    if feature == ExperimentalFeature::HasSelector {
+        stylo_static_prefs::set_pref!("layout.css.has-selector.enabled", enabled);
+    }
 }
 
 /// Turns on, in `preferences`, every feature switched on so far.
 pub(crate) fn apply(preferences: &mut Preferences) {
     ENABLED.with(|list| {
         for feature in list.borrow().iter() {
-            preferences.set_value(feature.pref_name(), PrefValue::Bool(true));
+            if feature.is_stylo_switch() {
+                set_stylo_switch(*feature, true);
+            } else {
+                preferences.set_value(feature.pref_name(), PrefValue::Bool(true));
+            }
         }
     });
 }
@@ -201,7 +231,10 @@ mod tests {
     // here instead of at browser start.
     #[test]
     fn every_pref_name_is_a_servo_bool_preference() {
-        for &feature in ExperimentalFeature::ALL {
+        for &feature in ExperimentalFeature::ALL
+            .iter()
+            .filter(|f| !f.is_stylo_switch())
+        {
             assert_eq!(
                 Preferences::type_of(feature.pref_name()),
                 "bool",
@@ -214,7 +247,10 @@ mod tests {
     #[test]
     fn features_are_off_in_servo_by_default() {
         let defaults = Preferences::default();
-        for &feature in ExperimentalFeature::ALL {
+        for &feature in ExperimentalFeature::ALL
+            .iter()
+            .filter(|f| !f.is_stylo_switch())
+        {
             let value = defaults.get_value(feature.pref_name());
             assert!(
                 matches!(value, PrefValue::Bool(false)),
@@ -249,5 +285,19 @@ mod tests {
         assert!(preferences.dom_webgpu_enabled);
         assert!(!preferences.dom_sanitizer_enabled);
         assert!(!preferences.dom_indexeddb_enabled);
+    }
+
+    // Stylo's switches are process-wide; this is the only test that touches one.
+    #[test]
+    fn has_selector_switches_stylo() {
+        assert!(!stylo_static_prefs::pref!(
+            "layout.css.has-selector.enabled"
+        ));
+        set_experimental_feature(ExperimentalFeature::HasSelector, true);
+        assert!(stylo_static_prefs::pref!("layout.css.has-selector.enabled"));
+        set_experimental_feature(ExperimentalFeature::HasSelector, false);
+        assert!(!stylo_static_prefs::pref!(
+            "layout.css.has-selector.enabled"
+        ));
     }
 }
