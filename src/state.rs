@@ -169,7 +169,7 @@ fn register_gl_accelerated_media(rendering_ctx: Option<&ActiveRenderingContext>)
 fn engine_preferences(use_gl_media: bool) -> Preferences {
     let web_fonts = WEB_FONTS.with(|f| f.borrow().clone()).unwrap_or_default();
     let devtools_port = DEVTOOLS_PORT.with(Cell::get);
-    Preferences {
+    let mut preferences = Preferences {
         // Decode video into GL textures shared with the rendering context
         // instead of CPU frame upload. Only effective when
         // initialize_gl_accelerated_media ran.
@@ -203,7 +203,9 @@ fn engine_preferences(use_gl_media: bool) -> Preferences {
         fonts_default_size: web_fonts.default_size,
         fonts_default_monospace_size: web_fonts.monospace_size,
         ..Default::default()
-    }
+    };
+    crate::experimental::apply(&mut preferences);
+    preferences
 }
 
 /// The screen and window geometry reported to web content, in physical pixels.
@@ -556,7 +558,7 @@ pub fn shutdown_engine() {
 }
 
 /// Run `f` with the shared engine if it has been initialised; otherwise do nothing.
-fn with_engine<R>(f: impl FnOnce(&servo::Servo) -> R) -> Option<R> {
+pub(crate) fn with_engine<R>(f: impl FnOnce(&servo::Servo) -> R) -> Option<R> {
     ENGINE.with(|c| c.borrow().as_ref().map(|(servo, ..)| f(servo)))
 }
 

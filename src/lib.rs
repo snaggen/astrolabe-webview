@@ -16,6 +16,7 @@
 pub(crate) mod delegate;
 pub(crate) mod dialog_handler;
 pub mod dialogs;
+mod experimental;
 pub mod find_bar;
 #[cfg(feature = "gamepad")]
 mod gamepad;
@@ -34,6 +35,7 @@ mod widget;
 // Public API
 pub use delegate::ContentFilterFn;
 pub use dialog_handler::DialogMsg;
+pub use experimental::{ExperimentalFeature, set_experimental_feature};
 pub use find_bar::{FIND_BAR_ID, FindBar, FindBarMsg, FindBarState, FindResult};
 pub use primitive::WebViewFrame;
 pub use rendering::{ActiveRenderingContext, GpuRenderingContext};
