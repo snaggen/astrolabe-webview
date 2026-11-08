@@ -50,7 +50,7 @@ pub(crate) struct PendingChildWebView {
     pub shared: Rc<SharedState>,
 }
 
-/// State shared between [`CosmicWebViewDelegate`] and [`crate::state::ServoState`].
+/// State shared between [`WebViewDelegateImpl`] and [`crate::state::ServoState`].
 pub(crate) struct SharedState {
     pub load_status: Cell<LoadStatus>,
     /// Incremented whenever a load starts. Lets a caller that recorded the
@@ -175,7 +175,7 @@ impl SharedState {
 /// [`SharedState::pending_dialog`] for the app to retrieve via
 /// [`crate::state::ServoState::take_dialog`]. All other `EmbedderControl`
 /// variants are dropped, which sends a default reply automatically.
-pub(crate) struct CosmicWebViewDelegate {
+pub(crate) struct WebViewDelegateImpl {
     rendering_ctx: Rc<dyn RenderingContext>,
     shared: Rc<SharedState>,
     frame_sink: FrameSink,
@@ -184,7 +184,7 @@ pub(crate) struct CosmicWebViewDelegate {
     gl_share: RefCell<GlShareState>,
 }
 
-impl CosmicWebViewDelegate {
+impl WebViewDelegateImpl {
     pub(crate) fn new(
         rendering_ctx: Rc<dyn RenderingContext>,
         shared: Rc<SharedState>,
@@ -322,7 +322,7 @@ impl CosmicWebViewDelegate {
     }
 }
 
-impl WebViewDelegate for CosmicWebViewDelegate {
+impl WebViewDelegate for WebViewDelegateImpl {
     fn notify_new_frame_ready(&self, webview: WebView) {
         if self.shared.visible.get() {
             webview.paint();
@@ -468,7 +468,7 @@ impl WebViewDelegate for CosmicWebViewDelegate {
         let child_ctx = ActiveRenderingContext::create(self.rendering_ctx.size());
         let child_shared = SharedState::new();
         let child_frame = WebViewFrame::new();
-        let child_delegate = Rc::new(CosmicWebViewDelegate::new(
+        let child_delegate = Rc::new(WebViewDelegateImpl::new(
             child_ctx.as_rc(),
             child_shared.clone(),
             child_frame.sink(),
@@ -588,9 +588,9 @@ impl WebViewDelegate for CosmicWebViewDelegate {
 }
 
 /// Handles engine-level errors and forwards them to the tracing subscriber.
-pub(crate) struct CosmicServoDelegate;
+pub(crate) struct ServoDelegateImpl;
 
-impl ServoDelegate for CosmicServoDelegate {
+impl ServoDelegate for ServoDelegateImpl {
     fn notify_error(&self, error: ServoError) {
         tracing::error!("Servo engine error: {error:?}");
     }

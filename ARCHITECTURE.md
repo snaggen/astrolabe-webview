@@ -18,7 +18,7 @@ Servo's OpenGL rendering, iced's wgpu compositor, and the iced event loop.
         · draws WebViewPrimitive                        · shared Servo engine
                │                                          (thread_local singleton)
         WebViewPrimitive / WebViewPipeline (primitive.rs)      │
-        · persistent wgpu textures, flip pipelines      CosmicWebViewDelegate (delegate.rs)
+        · persistent wgpu textures, flip pipelines      WebViewDelegateImpl (delegate.rs)
         · zero-copy state machine (wgpu side)           · Servo callbacks → SharedState
                │                                        · produces frames (GL side)
                └───────────── WebViewFrame ─────────────────────┘

@@ -15,7 +15,7 @@ use servo::{
 };
 use url::Url;
 
-use crate::delegate::{ContentFilterFn, CosmicServoDelegate, CosmicWebViewDelegate, SharedState};
+use crate::delegate::{ContentFilterFn, ServoDelegateImpl, SharedState, WebViewDelegateImpl};
 use crate::dialog_handler::{DialogHandler, DialogMsg};
 use crate::find_bar::FindResult;
 use crate::primitive::WebViewFrame;
@@ -51,7 +51,7 @@ thread_local! {
     /// second instance would compete with this one for the same events; every
     /// WebView shares it. `None` once opening the devices has failed.
     #[cfg(feature = "gamepad")]
-    static GAMEPADS: RefCell<Option<Option<Rc<crate::gamepad::CosmicGamepadDelegate>>>> =
+    static GAMEPADS: RefCell<Option<Option<Rc<crate::gamepad::GamepadDelegateImpl>>>> =
         const { RefCell::new(None) };
 }
 
@@ -67,10 +67,10 @@ pub(crate) fn webdriver_engine_handles() -> Option<(IcedEventLoopWaker, Preferen
 
 /// The shared gamepad reader, opened on first use.
 #[cfg(feature = "gamepad")]
-fn gamepads() -> Option<Rc<crate::gamepad::CosmicGamepadDelegate>> {
+fn gamepads() -> Option<Rc<crate::gamepad::GamepadDelegateImpl>> {
     GAMEPADS.with(|cell| {
         cell.borrow_mut()
-            .get_or_insert_with(|| crate::gamepad::CosmicGamepadDelegate::new().map(Rc::new))
+            .get_or_insert_with(|| crate::gamepad::GamepadDelegateImpl::new().map(Rc::new))
             .clone()
     })
 }
@@ -136,7 +136,7 @@ fn engine(
             .event_loop_waker(Box::new(waker.clone()))
             .build();
         servo.setup_logging();
-        servo.set_delegate(Rc::new(CosmicServoDelegate));
+        servo.set_delegate(Rc::new(ServoDelegateImpl));
         // Create the shared user-content manager now so every WebView (including
         // engine-created popups) injects the same scripts/CSS.
         init_user_content(&servo);
@@ -660,7 +660,7 @@ impl ServoState {
 
         let shared = SharedState::new();
         let frame = WebViewFrame::new();
-        let delegate = Rc::new(CosmicWebViewDelegate::new(
+        let delegate = Rc::new(WebViewDelegateImpl::new(
             rendering_ctx.as_rc(),
             shared.clone(),
             // The delegate fills the frame buffer in place — no intermediate copy.
@@ -1171,7 +1171,7 @@ impl ServoState {
                     if(par)par.replaceChild(document.createTextNode(old[i].textContent),old[i]);
                 }}
                 if(document.body)document.body.normalize();
-                window.__cosmicFind=null;
+                window.__astrolabeFind=null;
                 if(!document.body)return 0;
                 if(!document.getElementById('cf-style')){{
                     var s=document.createElement('style');
@@ -1219,7 +1219,7 @@ impl ServoState {
                         }}
                     }}
                 }}
-                window.__cosmicFind={{marks:marks,current:0}};
+                window.__astrolabeFind={{marks:marks,current:0}};
                 if(marks.length>0){{
                     marks[0].className='cf cfc';
                     marks[0].scrollIntoView({{block:'nearest'}});
@@ -1248,8 +1248,8 @@ impl ServoState {
     pub fn find_next(&self, wrap: bool) -> libcosmic::iced::Task<usize> {
         let script = format!(
             r#"(function(){{
-                if(!window.__cosmicFind)return 0;
-                var f=window.__cosmicFind;
+                if(!window.__astrolabeFind)return 0;
+                var f=window.__astrolabeFind;
                 var total=f.marks.length;
                 if(total===0)return 0;
                 var next=f.current+1;
@@ -1277,8 +1277,8 @@ impl ServoState {
     pub fn find_prev(&self, wrap: bool) -> libcosmic::iced::Task<usize> {
         let script = format!(
             r#"(function(){{
-                if(!window.__cosmicFind)return 0;
-                var f=window.__cosmicFind;
+                if(!window.__astrolabeFind)return 0;
+                var f=window.__astrolabeFind;
                 var total=f.marks.length;
                 if(total===0)return 0;
                 var prev=f.current-1;
@@ -1304,14 +1304,14 @@ impl ServoState {
     pub fn find_clear(&self) {
         self.webview.evaluate_javascript(
             r#"(function(){
-                if(window.__cosmicFind){
-                    var marks=window.__cosmicFind.marks;
+                if(window.__astrolabeFind){
+                    var marks=window.__astrolabeFind.marks;
                     for(var i=0;i<marks.length;i++){
                         var m=marks[i];
                         var parent=m.parentNode;
                         if(parent)parent.replaceChild(document.createTextNode(m.textContent),m);
                     }
-                    window.__cosmicFind=null;
+                    window.__astrolabeFind=null;
                 }
                 if(document.body)document.body.normalize();
             })()"#,

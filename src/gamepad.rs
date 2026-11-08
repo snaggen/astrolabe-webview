@@ -31,13 +31,13 @@ struct HapticEffect {
 ///
 /// One instance serves the whole engine: gilrs owns the device connections, and
 /// a second handle would compete for the same events.
-pub(crate) struct CosmicGamepadDelegate {
+pub(crate) struct GamepadDelegateImpl {
     handle: RefCell<Gilrs>,
     /// Rumble effects by gamepad index, awaiting completion.
     haptic_effects: RefCell<HashMap<usize, HapticEffect>>,
 }
 
-impl CosmicGamepadDelegate {
+impl GamepadDelegateImpl {
     /// Opens the gamepad subsystem, or returns `None` when it is unavailable —
     /// a machine with no input device access is not an error worth failing over.
     pub(crate) fn new() -> Option<Self> {
@@ -213,7 +213,7 @@ impl CosmicGamepadDelegate {
     }
 }
 
-impl GamepadDelegate for CosmicGamepadDelegate {
+impl GamepadDelegate for GamepadDelegateImpl {
     fn handle_haptic_effect_request(&self, request: GamepadHapticEffectRequest) {
         match request.request_type() {
             GamepadHapticEffectRequestType::Play(effect_type) => {
