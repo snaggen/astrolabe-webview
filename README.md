@@ -4,11 +4,12 @@
 > [COSMIC Desktop Environment](https://github.com/pop-os/cosmic-epoch). It was originally called
 > `cosmic-webview` out of lazy naming, nothing more, and was renamed to make that clear.
 >
-> This is a personal, experimental project. It is the engine widget behind the
-> [Astrolabe](https://github.com/snaggen/astrolabe) browser; see that project for context.
+> This is a personal, experimental project.
 
-A [Servo](https://servo.org/)-based WebView widget for applications built on the
-[libcosmic](https://github.com/pop-os/libcosmic) UI toolkit (iced + wgpu).
+A general-purpose WebView widget for the COSMIC desktop, built on [Servo](https://servo.org/)
+and the [libcosmic](https://github.com/pop-os/libcosmic) UI toolkit (iced + wgpu). Any libcosmic
+application can use it to show web content. The [Astrolabe](https://github.com/snaggen/astrolabe)
+browser is built on it, but the widget is not tied to Astrolabe.
 
 ## Features
 
