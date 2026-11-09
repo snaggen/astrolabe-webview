@@ -544,6 +544,9 @@ impl WebViewDelegate for WebViewDelegateImpl {
     fn notify_history_changed(&self, _webview: WebView, entries: Vec<Url>, current: usize) {
         self.shared.can_go_back.set(current > 0);
         self.shared.can_go_forward.set(current + 1 < entries.len());
+        // Servo reports the URL before the history, so the wake for the URL
+        // change can come too early to see the new back/forward state.
+        let _ = self.waker_tx.try_send(());
     }
 
     fn show_console_message(&self, _webview: WebView, level: ConsoleLogLevel, message: String) {
