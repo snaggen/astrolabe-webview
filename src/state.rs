@@ -10,8 +10,8 @@ use servo::{
     DeviceIndependentPixel, DeviceIntPoint, DeviceIntRect, DeviceIntSize, DevicePixel,
     EmbedderControl, InputEvent, JSValue, JavaScriptEvaluationError, LoadStatus, MediaMetadata,
     MediaPositionState, MediaSessionActionType, MediaSessionPlaybackState, Notification, Opts,
-    PermissionRequest, PrefValue, Preferences, RgbaImage, ServoBuilder, SiteData, StorageType,
-    Theme, UserContentManager, UserScript, WebViewBuilder,
+    PermissionRequest, PrefValue, Preferences, RgbaImage, ScreenshotCaptureError, ServoBuilder,
+    SiteData, StorageType, Theme, UserContentManager, UserScript, WebViewBuilder,
 };
 use url::Url;
 
@@ -844,12 +844,49 @@ impl ServoState {
 
     /// Captures the most recently rendered frame as a top-down image.
     ///
-    /// This is an on-demand GPU readback intended for occasional use
-    /// (screenshots, tab thumbnails) — it is **not** part of the per-frame
-    /// render path and allocates a fresh image each call.
+    /// This is an on-demand GPU readback intended for occasional use — it is
+    /// **not** part of the per-frame render path and allocates a fresh image
+    /// each call. It reads whatever was drawn last, which may be a half-drawn
+    /// page; [`take_screenshot`](Self::take_screenshot) waits for a finished one.
     pub fn screenshot(&self) -> Option<RgbaImage> {
         let rect = DeviceIntRect::from_size(self.webview.size().to_i32());
         self.rendering_ctx.as_rc().read_to_image(rect)
+    }
+
+    /// Captures the page once it has finished rendering, as a top-down image.
+    ///
+    /// Unlike [`screenshot`](Self::screenshot), this waits until the page is
+    /// complete: every frame has fired its `load` event, images and web fonts
+    /// are loaded, and no frames are pending. Use it where a half-drawn page
+    /// would be wrong, such as tab thumbnails.
+    ///
+    /// The image is taken when the engine next paints this tab, so for a hidden
+    /// tab it never arrives; bound the wait with a timeout. The future resolves
+    /// to [`ScreenshotCaptureError::WebViewDoesNotExist`] if the engine drops
+    /// the request.
+    ///
+    /// ```no_run
+    /// # use astrolabe_webview::ServoState;
+    /// # async fn f(state: &ServoState) {
+    /// let pending = state.take_screenshot();
+    /// if let Ok(image) = pending.await {
+    ///     println!("{}x{}", image.width(), image.height());
+    /// }
+    /// # }
+    /// ```
+    pub fn take_screenshot(
+        &self,
+    ) -> impl Future<Output = Result<RgbaImage, ScreenshotCaptureError>> + Send + 'static {
+        let (tx, rx) = async_channel::bounded(1);
+        self.webview.take_screenshot(None, move |result| {
+            // The receiver is gone if the caller stopped waiting; nothing to do.
+            let _ = tx.try_send(result);
+        });
+        async move {
+            rx.recv()
+                .await
+                .unwrap_or(Err(ScreenshotCaptureError::WebViewDoesNotExist))
+        }
     }
 
     /// How many loads this tab has started.

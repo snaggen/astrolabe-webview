@@ -54,11 +54,11 @@ pub use servo::{
     AllowOrDenyRequest, BluetoothDeviceDescription, BluetoothDeviceSelectionRequest,
     ClipboardAction, ContextMenu, ContextMenuAction, ContextMenuItem, EmbedderControl, InputEvent,
     LoadStatus, MediaMetadata, MediaPositionState, MediaSessionActionType,
-    MediaSessionPlaybackState, Notification, PermissionFeature, PermissionRequest, SiteData, Theme,
+    MediaSessionPlaybackState, Notification, PermissionFeature, PermissionRequest,
+    ScreenshotCaptureError, SiteData, Theme,
 };
 #[cfg(feature = "webdriver")]
 pub use servo::{
-    DeviceIndependentIntRect, GenericSender, NewWindowTypeHint, ScreenshotCaptureError,
-    WebDriverCommandMsg, WebDriverLoadStatus, WebDriverUserPrompt, WebDriverUserPromptAction,
-    WebViewId,
+    DeviceIndependentIntRect, GenericSender, NewWindowTypeHint, WebDriverCommandMsg,
+    WebDriverLoadStatus, WebDriverUserPrompt, WebDriverUserPromptAction, WebViewId,
 };
